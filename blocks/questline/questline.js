@@ -3286,6 +3286,10 @@ export default async function decorate(block) {
     });
   }
 
+  // walking into a person, door, gate or sign opens it; after a conversation the arrow that is
+  // still held down must be pressed again, so closing a dialog never reopens it straight away
+  let bumpReady = true;
+
   async function run(encounter) {
     if (busy) return;
     busy = true;
@@ -3296,6 +3300,7 @@ export default async function decorate(block) {
       if (!(e instanceof DialogClosed)) throw e; // Esc: leave the conversation, progress is kept
     } finally {
       busy = false;
+      bumpReady = false;
       stage.focus({ preventScroll: true });
     }
   }
@@ -3397,8 +3402,7 @@ export default async function decorate(block) {
     }, 220);
   }
 
-  // bump: a fresh arrow press into a person, door, gate or sign interacts with it
-  function tryStep(dir, bump = false) {
+  function tryStep(dir) {
     if (motion.moving || busy) return;
     state.dir = dir;
     const [dx, dy] = DIRS[dir];
@@ -3424,7 +3428,7 @@ export default async function decorate(block) {
       motion.tx = state.x + dx;
       motion.ty = state.y + dy;
       motion.prog = 0;
-    } else if (bump && facing()) interact();
+    } else if (bumpReady && facing()) interact(); // bumped into someone or something
   }
 
   let actionArmed = false;
@@ -3444,8 +3448,9 @@ export default async function decorate(block) {
     if (dir) {
       e.preventDefault();
       if (!busy) {
+        if (!e.repeat) bumpReady = true;
         press(dir);
-        tryStep(dir, !e.repeat); // a quick tap still moves one tile
+        tryStep(dir); // a quick tap still moves one tile
       }
     } else if (ACTION_KEYS.includes(e.code)) {
       e.preventDefault();
@@ -3471,8 +3476,9 @@ export default async function decorate(block) {
       e.preventDefault();
       btn.setPointerCapture(e.pointerId);
       if (!busy) {
+        bumpReady = true;
         press(dir);
-        tryStep(dir, true);
+        tryStep(dir);
       }
     });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, () => release(dir)));
