@@ -809,3 +809,240 @@
   border-color: #f4a261;
   color: #ffd7b0;
 }
+
+/* screen change: a quick fade when walking between the realm and Adobe */
+.questline .questline-canvas,
+.questline .questline-signs {
+  transition: opacity 0.2s ease;
+}
+
+.questline .questline-fading .questline-canvas,
+.questline .questline-fading .questline-signs {
+  opacity: 0;
+}
+
+/* wooden signpost boards */
+.questline .questline-post {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border: 0.25cqw solid #2a1a0e;
+  border-radius: 0.4cqw;
+  background: linear-gradient(#c99560, #a8743f);
+  box-shadow: 0 0.3cqw 0 rgb(0 0 0 / 35%);
+  font-family: var(--ql-pixel-font);
+  font-size: 1.25cqw;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: #fff8e6;
+  text-shadow: 0 0.15cqw 0 #5a3418;
+}
+
+/* the library's name on its frieze */
+.questline .questline-frieze {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.35cqw;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #6b4a1a;
+}
+
+/* chalk heading on the blackboard */
+.questline .questline-chalk {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  font-family: var(--ql-pixel-font);
+  font-size: 1.05cqw;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: #f2f7ec;
+  text-shadow: 0 0 0.3cqw rgb(255 255 255 / 40%);
+}
+
+/* library */
+.questline .questline-panel-library {
+  border-color: #c9a227;
+}
+
+.questline .questline-panel-library .questline-panel-title {
+  color: var(--ql-gold);
+}
+
+.questline .questline-lib-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 8px;
+}
+
+.questline .questline-lib-tab {
+  padding: 5px 10px;
+  border: 2px solid #4a4f7a;
+  border-radius: 999px;
+  background: var(--ql-night-2);
+  color: var(--ql-ink);
+  font-family: var(--ql-pixel-font);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.questline .questline-lib-tab[aria-selected='true'] {
+  border-color: var(--ql-gold);
+  background: var(--ql-gold);
+  color: var(--ql-night);
+}
+
+.questline .questline-lib-count {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 25%);
+  font-size: 11px;
+  text-align: center;
+}
+
+.questline .questline-lib-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 2px 4px 2px 0;
+  outline: none;
+}
+
+.questline .questline-lib-item {
+  padding: 10px 12px;
+  border: 1px solid #3c4170;
+  border-left: 4px solid #c9a227;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.questline .questline-lib-title {
+  font-weight: 700;
+}
+
+.questline .questline-lib-meta {
+  margin-top: 2px;
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+  color: #8ecae6;
+}
+
+.questline .questline-lib-text {
+  margin-top: 6px;
+  color: #d9d6ea;
+}
+
+.questline .questline-lib-answer {
+  margin-top: 6px;
+  color: var(--ql-good);
+}
+
+.questline .questline-lib-answer summary {
+  cursor: pointer;
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+  color: var(--ql-gold);
+}
+
+.questline .questline-lib-link {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--ql-gold);
+}
+
+/* leaderboard: a chalkboard */
+.questline .questline-panel-board {
+  border-color: #8a5a2e;
+  background: #1f3b2c;
+  box-shadow: inset 0 0 0 4px #2a4a37;
+}
+
+.questline .questline-panel-board .questline-panel-title {
+  color: #f2f7ec;
+}
+
+.questline .questline-lb {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.questline .questline-lb-row {
+  display: grid;
+  grid-template-columns: 2.2em 27px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 8px;
+  border-bottom: 1px dashed rgb(242 247 236 / 20%);
+  font-size: 15px;
+  color: #f2f7ec;
+}
+
+.questline .questline-lb-top1 {
+  background: rgb(244 211 94 / 14%);
+}
+
+.questline .questline-lb-rank {
+  font-family: var(--ql-pixel-font);
+  font-weight: 700;
+  text-align: center;
+}
+
+.questline .questline-lb-face {
+  width: 27px;
+  height: 28px;
+  image-rendering: pixelated;
+}
+
+.questline .questline-lb-name {
+  font-weight: 700;
+}
+
+.questline .questline-lb-meta {
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+  color: #b9d3bc;
+}
+
+.questline .questline-lb-arr {
+  min-width: 4.5em;
+  font-family: var(--ql-pixel-font);
+  font-weight: 700;
+  text-align: right;
+  color: var(--ql-gold);
+}
+
+.questline .questline-lb-me {
+  margin-top: 6px;
+  font-weight: 700;
+  color: var(--ql-gold);
+}
+
+@media (width < 520px) {
+  .questline .questline-lb-row {
+    grid-template-columns: 2em 27px 1fr auto;
+  }
+
+  .questline .questline-lb-meta {
+    display: none;
+  }
+}
