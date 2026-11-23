@@ -2411,14 +2411,11 @@ export default async function decorate(block) {
       : `Insights ${state.talked.length}/${npcs.length}`;
     dealEl.textContent = `Deals ${state.deals.length}/${customers.length}`;
     const closed = arrClosed();
-    const arrFill = el('span', { class: 'questline-arrfill' });
-    arrFill.style.width = `${arrGoal ? Math.min(100, (closed / arrGoal) * 100) : 0}%`;
     arrEl.replaceChildren(
       el('span', { class: 'questline-arrlabel', text: 'ARR' }),
-      el('span', { class: 'questline-arrbar' }, arrFill),
-      el('span', { class: 'questline-arrtext', text: `${money(closed)} / ${money(arrGoal)}` }),
+      el('span', { class: 'questline-arrtext', text: money(closed) }),
     );
-    arrEl.setAttribute('aria-label', `ARR closed ${money(closed)} of ${money(arrGoal)} goal`);
+    arrEl.setAttribute('aria-label', `ARR closed ${money(closed)}`);
     signTags.forEach((tag, i) => {
       const won = state.deals.includes(i);
       tag.textContent = won
@@ -2888,7 +2885,7 @@ export default async function decorate(block) {
       await dialog.open({
         tone: 'good',
         title: T('expansion.won.title', { company: c.company }),
-        lines: [T('expansion.won', { who, company: c.company }), `💰 ${money(arrClosed())} of ${money(arrGoal)} goal`],
+        lines: [T('expansion.won', { who, company: c.company }), `💰 ${money(arrClosed())} ARR closed`],
         choices: next('Onward'),
       });
       return true;
@@ -2981,7 +2978,7 @@ export default async function decorate(block) {
         title: T('deal.title', { company: c.company }),
         lines: [
           T('deal.yes', { who, company: c.company }),
-          `💰 ${money(value)} ARR closed · ${money(arrClosed())} of ${money(arrGoal)} goal`,
+          `💰 +${money(value)} ARR · ${money(arrClosed())} closed`,
           earned.length ? T('deal.letter', { name: c.contact ? c.contact.split(',')[0] : c.company, company: c.company }) : '',
         ],
         note: expansions[ci] ? T('deal.expansion', { company: c.company }) : null,
@@ -3079,7 +3076,7 @@ export default async function decorate(block) {
           levelLine,
           summary,
           customers.length ? `Deals won: ${state.deals.length}/${customers.length}` : '',
-          customers.length ? `💰 ARR closed: ${money(arrClosed())} of ${money(arrGoal)} (${Math.round((arrClosed() / arrGoal) * 100)}%)` : '',
+          customers.length ? `💰 ARR closed: ${money(arrClosed())}` : '',
           references.length || expansions.some(Boolean)
             ? `Side quests: ${state.refsDelivered.length}/${references.length} references · ${Object.keys(state.expWon).length}/${expansions.filter(Boolean).length} expansions · ${Object.keys(state.mythsWon).length}/${content.myths.length} myths`
             : '',
@@ -3091,7 +3088,7 @@ export default async function decorate(block) {
       });
       again = choice === 'copy';
       if (again) {
-        const text = `Questline · ${avatar?.name || 'A seller'} cleared ${content.title} 🏅\n${levelLine}\n💰 ${money(arrClosed())} of ${money(arrGoal)} ARR\n${summary}\n${grid}\n${window.location.href}`;
+        const text = `Questline · ${avatar?.name || 'A seller'} cleared ${content.title} 🏅\n${levelLine}\n💰 ${money(arrClosed())} ARR\n${summary}\n${grid}\n${window.location.href}`;
         try {
           await navigator.clipboard.writeText(text);
         } catch (e) {
@@ -3260,7 +3257,7 @@ export default async function decorate(block) {
         await dialog.open({
           tone: 'good',
           title: T('myth.won.title'),
-          lines: [T('myth.won', { who: w.name }), `💰 +${money(m.arr)} ARR · ${money(arrClosed())} of ${money(arrGoal)} goal`],
+          lines: [T('myth.won', { who: w.name }), `💰 +${money(m.arr)} ARR · ${money(arrClosed())} closed`],
           link: m.link,
           choices: next('Onward'),
         });
