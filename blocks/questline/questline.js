@@ -15,10 +15,18 @@
  *   Shrine    | <text> | <link>
  *   Play      | <play name> | <what it is / when to use it> | <taught by: NPC name> | <link>
  *   Customer  | <company> | <logo image> | <contact, e.g. "Priya, VP Digital"> | <situation>
- *             | <best play name> | <required skills, comma-separated> | <link>
+ *             | <best play> | <required skills, comma-separated> | <ARR, e.g. "$450k"> | <link>
  *             Required skills are expertise areas and/or play names (default: the best play).
  *             The more skills a customer needs, the posher their house (cottage, townhouse,
- *             manor).
+ *             manor). ARR is the deal's annual recurring revenue (default by house: $150k,
+ *             $400k, $1M). Each failed pitch knocks 25% of the original ARR off that deal
+ *             (floor 25%); the realm's goal is the sum of all customers' ARR.
+ *   Reference | <from customer> | <to customer> | <story, e.g. "Priya: pages now load in 1s">
+ *             Side quest: winning <from> earns a reference letter; sharing it with <to>
+ *             restores ARR lost on failed pitches and adds 15% to that deal.
+ *   Expansion | <customer> | <upsell ask> | <best answer> | <weak answer> | ... | <ARR> | <link>
+ *             Side quest: after a deal is won the customer asks for more. A right answer adds
+ *             the expansion ARR (default 25% of the deal); a weak one costs 25% of it.
  * Puzzles are spread across up to three rune gates; objections make up the boss fight.
  * Each customer lives in a house: three in the village, two in the grove behind Rune Gate 1
  * and two on the lake islands behind Rune Gate 2 (max 7). To propose a strategy the
@@ -47,6 +55,8 @@ const XP = {
   gate: 10, // rune gate question
   objection: 15, // boss objection countered
   shrine: 10, // studying at the shrine
+  reference: 10, // sharing the right customer story
+  expansion: 15, // winning an upsell
 };
 const levelOf = (xp) => Math.floor(xp / XP_PER_LEVEL);
 const MAX_GATES = 3;
@@ -112,6 +122,20 @@ function hash(x, y) {
   return h;
 }
 
+const MONEY = /^[$€£]?\s*\d[\d.,]*\s*[kKmM]?(\s*ARR)?$/;
+function parseMoney(text) {
+  const m = text.replace(/ARR|[$€£\s]/gi, '').match(/^([\d.,]+)([kKmM]?)$/);
+  if (!m) return 0;
+  const n = parseFloat(m[1].replace(/,/g, ''));
+  const mult = { k: 1e3, m: 1e6 }[m[2].toLowerCase()] || 1;
+  return Math.round(n * mult);
+}
+function money(v) {
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
+  if (v >= 1e3) return `$${Math.round(v / 1e3)}k`;
+  return `$${Math.round(v)}`;
+}
+
 /* ---------- content parsing ---------- */
 
 const cellText = (cell) => (cell ? cell.textContent.replace(/\s+/g, ' ').trim() : '');
@@ -137,6 +161,8 @@ function parseContent(block) {
     shrine: null,
     plays: [],
     customers: [],
+    references: [],
+    expansions: [],
   };
   [...block.children].forEach((row) => {
     const cells = [...row.children];
@@ -175,12 +201,17 @@ function parseContent(block) {
       case 'customer':
       case 'account':
         if (pos[0]) {
+          // the ARR cell is recognised by its money format, so required skills stay optional
+          const tail = pos.slice(3);
+          const arrAt = tail.findIndex((t) => MONEY.test(t));
+          const arr = arrAt >= 0 ? parseMoney(tail.splice(arrAt, 1)[0]) : 0;
           content.customers.push({
             company: pos[0],
             contact: pos[1] || '',
             situation: posCells[2] ? cellLines(posCells[2]) : [],
-            best: pos[3] || '',
-            requires: (pos[4] || '').split(/[,;\n·]+/).map((s) => s.trim()).filter(Boolean),
+            best: tail[0] || '',
+            requires: (tail[1] || '').split(/[,;\n·]+/).map((s) => s.trim()).filter(Boolean),
+            arr,
             logo: img ? { src: img.currentSrc || img.src, alt: img.alt } : null,
             link,
           });
@@ -219,6 +250,30 @@ function parseContent(block) {
       case 'shrine':
         content.shrine = { text: texts.join(' '), link };
         break;
+      case 'reference':
+        if (texts.length >= 2) {
+          content.references.push({
+            from: texts[0], to: texts[1], story: textCells.slice(2).flatMap(cellLines), link,
+          });
+        }
+        break;
+      case 'expansion':
+      case 'upsell': {
+        const parts = [...texts];
+        const arrAt = parts.findIndex((t, idx) => idx > 2 && MONEY.test(t));
+        const arr = arrAt >= 0 ? parseMoney(parts.splice(arrAt, 1)[0]) : 0;
+        if (parts.length >= 4) {
+          content.expansions.push({
+            customer: parts[0],
+            prompt: parts[1],
+            answer: parts[2],
+            wrong: parts.slice(3),
+            arr,
+            link,
+          });
+        }
+        break;
+      }
       default:
         break;
     }
@@ -234,6 +289,8 @@ function parseContent(block) {
     shrine: content.shrine,
     plays: content.plays,
     customers: content.customers,
+    references: content.references,
+    expansions: content.expansions,
   };
 }
 
@@ -1345,11 +1402,22 @@ export default async function decorate(block) {
     let tier = 1; // cottage
     if (needs.length >= 4) tier = 3; // manor
     else if (needs.length >= 2) tier = 2; // townhouse
+    const arr = c.arr || [150000, 400000, 1000000][tier - 1];
     return {
-      ...c, house: world.houses[i], needs, tier,
+      ...c, house: world.houses[i], needs, tier, arr,
     };
   });
   const playFor = (c) => plays.find((p) => c.best && same(p.name, c.best));
+  const customerIndex = (name) => customers.findIndex((c) => same(c.company, name || ''));
+  // side quests
+  const references = content.references
+    .map((r) => ({ ...r, from: customerIndex(r.from), to: customerIndex(r.to) }))
+    .filter((r) => r.from >= 0 && r.to >= 0 && r.from !== r.to);
+  const expansions = customers.map((c, ci) => {
+    const e = content.expansions.find((x) => customerIndex(x.customer) === ci);
+    return e ? { ...e, arr: e.arr || Math.round(c.arr * 0.25) } : null;
+  });
+  const arrGoal = customers.reduce((sum, c, ci) => sum + c.arr + (expansions[ci]?.arr || 0), 0);
 
   /* state */
   const fresh = () => ({
@@ -1371,11 +1439,35 @@ export default async function decorate(block) {
     history: [],
     startedAt: 0,
     finishedIn: 0,
+    pitchMisses: {}, // customer index -> failed pitches
+    arrWon: {}, // customer index -> ARR closed
+    letters: [], // reference indices earned and not yet delivered
+    refsDelivered: [], // reference indices delivered to the right prospect
+    refBoost: {}, // customer index -> true when a reference was shared
+    expWon: {}, // customer index -> expansion ARR closed
+    expMisses: {}, // customer index -> weak expansion answers
   });
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
   if (!Array.isArray(state.gates) || state.gates.length !== MAX_GATES) state.gates = fresh().gates;
   state.bossHp = maxHp - (state.bossSolved || []).length;
+  state.pitchMisses = state.pitchMisses || {};
+  state.arrWon = state.arrWon || {};
+  ['letters', 'refsDelivered'].forEach((k) => { state[k] = state[k] || []; });
+  ['refBoost', 'expWon', 'expMisses'].forEach((k) => { state[k] = state[k] || {}; });
+  // what a customer's deal is still worth after failed pitches
+  const PITCH_PENALTY = 0.25;
+  const REFERENCE_BONUS = 1.15;
+  const keep = (misses) => Math.max(PITCH_PENALTY, 1 - PITCH_PENALTY * (misses || 0));
+  const dealValue = (ci) => Math.round(
+    customers[ci].arr * keep(state.pitchMisses[ci]) * (state.refBoost[ci] ? REFERENCE_BONUS : 1),
+  );
+  const expansionValue = (ci) => Math.round((expansions[ci]?.arr || 0) * keep(state.expMisses[ci]));
+  const expansionOpen = (ci) => !!expansions[ci]
+    && state.deals.includes(ci) && !(ci in state.expWon);
+  const sum = (obj) => Object.values(obj).reduce((a, v) => a + v, 0);
+  const arrClosed = () => sum(state.arrWon) + sum(state.expWon);
+  const lettersHeld = () => state.letters.filter((ri) => !state.refsDelivered.includes(ri));
   const skills = () => [
     ...state.talked.filter((ni) => npcs[ni]?.expertise).map((ni) => ({ kind: 'expertise', name: npcs[ni].expertise })),
     ...state.plays.filter((pi) => plays[pi]).map((pi) => ({ kind: 'play', name: plays[pi].name })),
@@ -1410,6 +1502,7 @@ export default async function decorate(block) {
   const skillsEl = el('div', { class: 'questline-skills' });
   const insightEl = el('span', { class: 'questline-stat' });
   const dealEl = el('span', { class: 'questline-stat' });
+  const arrEl = el('span', { class: 'questline-arrbox' });
   const gateEl = el('span', { class: 'questline-stat' });
   const objectiveEl = el('p', { class: 'questline-objective' });
   const hintEl = el('p', { class: 'questline-hint', 'aria-live': 'polite' });
@@ -1436,8 +1529,13 @@ export default async function decorate(block) {
       width: pct(26, COLS * TILE),
       height: pct(11, ROWS * TILE),
     });
-    sign.title = c.company;
+    sign.title = `${c.company} · ${money(c.arr)} ARR`;
     return sign;
+  });
+  const signTags = signs.map((sign) => {
+    const tag = el('span', { class: 'questline-sign-arr' });
+    sign.append(tag);
+    return tag;
   });
   if (signs.length) stage.append(el('div', { class: 'questline-signs' }, signs));
 
@@ -1484,7 +1582,7 @@ export default async function decorate(block) {
       'div',
       { class: 'questline-hud' },
       el('p', { class: 'questline-title', text: content.title }),
-      el('div', { class: 'questline-stats' }, levelEl, insightEl, customers.length ? dealEl : null, gateEl),
+      el('div', { class: 'questline-stats' }, levelEl, customers.length ? arrEl : null, insightEl, customers.length ? dealEl : null, gateEl),
     ),
     skillsEl,
     objectiveEl,
@@ -1519,11 +1617,31 @@ export default async function decorate(block) {
           text: `${s.kind === 'play' ? '📘' : '★'} ${s.name}`,
         }))
         : [el('span', { class: 'questline-chip-empty', text: 'None yet. Talk to people to learn.' })]),
+      ...lettersHeld().map((ri) => el('span', {
+        class: 'questline-chip questline-chip-letter',
+        text: `📜 ${customers[references[ri].from].company} story`,
+      })),
     );
     insightEl.textContent = plays.length
       ? `Plays ${state.plays.length}/${plays.length}`
       : `Insights ${state.talked.length}/${npcs.length}`;
     dealEl.textContent = `Deals ${state.deals.length}/${customers.length}`;
+    const closed = arrClosed();
+    const arrFill = el('span', { class: 'questline-arrfill' });
+    arrFill.style.width = `${arrGoal ? Math.min(100, (closed / arrGoal) * 100) : 0}%`;
+    arrEl.replaceChildren(
+      el('span', { class: 'questline-arrlabel', text: 'ARR' }),
+      el('span', { class: 'questline-arrbar' }, arrFill),
+      el('span', { class: 'questline-arrtext', text: `${money(closed)} / ${money(arrGoal)}` }),
+    );
+    arrEl.setAttribute('aria-label', `ARR closed ${money(closed)} of ${money(arrGoal)} goal`);
+    signTags.forEach((tag, i) => {
+      const won = state.deals.includes(i);
+      tag.textContent = won
+        ? `✓ ${money((state.arrWon[i] || 0) + (state.expWon[i] || 0))}`
+        : money(dealValue(i));
+      tag.classList.toggle('lowered', !won && !!state.pitchMisses[i]);
+    });
     gateEl.textContent = `Gates ${state.gates.slice(0, numGates).filter(Boolean).length}/${numGates}`;
     signs.forEach((s, i) => s.classList.toggle('won', state.deals.includes(i)));
     const nextGate = state.gates.findIndex((open) => !open);
@@ -1536,7 +1654,11 @@ export default async function decorate(block) {
       objective = 'Objective: learn the skills customers need (🔒 doors). Experts with ! teach them';
     } else if (nextGate >= 0) objective = `Objective: open Rune Gate ${nextGate + 1}`;
     else objective = `Objective: defeat ${content.bossName}`;
-    objectiveEl.textContent = objective;
+    const side = [];
+    const openExp = customers.filter((_, ci) => expansionOpen(ci)).length;
+    if (openExp) side.push(`${openExp} expansion${openExp === 1 ? '' : 's'} (blue +)`);
+    if (lettersHeld().length) side.push(`${lettersHeld().length} reference letter${lettersHeld().length === 1 ? '' : 's'} to share`);
+    objectiveEl.textContent = side.length ? `${objective} · Side quests: ${side.join(', ')}` : objective;
   }
 
   /* world queries */
@@ -1569,10 +1691,12 @@ export default async function decorate(block) {
     const ci = customerAt(x, y);
     if (ci >= 0) {
       const c = customers[ci];
-      let label = `visit ${c.company}`;
+      let label = expansionOpen(ci)
+        ? `discuss an expansion with ${c.company} (+${money(expansionValue(ci))} ARR)`
+        : `visit ${c.company}`;
       if (!state.deals.includes(ci)) {
         const have = c.needs.length - missingFor(c).length;
-        label = `knock on ${c.company}'s door (skills ${have}/${c.needs.length})`;
+        label = `knock on ${c.company}'s door (${money(dealValue(ci))} ARR · skills ${have}/${c.needs.length})`;
       }
       return { type: 'customer', index: ci, label };
     }
@@ -1624,6 +1748,7 @@ export default async function decorate(block) {
         title: PLAYER_LOOKS[lookIndex(level)].title,
         xp: String(state.xp),
         deals: `${state.deals.length}/${customers.length}`,
+        arr: money(arrClosed()),
         cleared: state.won ? 'yes' : 'no',
         updated: new Date().toISOString(),
       });
@@ -1865,12 +1990,116 @@ export default async function decorate(block) {
     }
   }
 
+  // side quest: share a won customer's story with a prospect who has the same problem
+  async function offerReference(ci) {
+    const letters = lettersHeld();
+    if (!letters.length || state.refBoost[ci]) return;
+    const c = customers[ci];
+    const who = c.contact || c.company;
+    const pick = await dialog.open({
+      speaker: 'Your strategy',
+      title: '📜 Share a customer story first?',
+      lines: [`Which story would convince ${c.company}?`],
+      choices: [
+        ...letters.map((ri) => ({
+          label: `${customers[references[ri].from].company}: ${references[ri].story[0] || 'reference letter'}`,
+          value: ri,
+          numbered: true,
+        })),
+        { label: 'Skip', value: -1, numbered: true },
+      ],
+    });
+    if (pick < 0) return;
+    const ref = references[pick];
+    if (ref.to !== ci) {
+      await dialog.open({
+        speaker: c.contact ? `${c.contact} · ${c.company}` : c.company,
+        lines: [`${who}: “Interesting, but that’s not really our situation.”`],
+        note: 'No harm done. Keep the letter for a prospect with a similar problem.',
+        choices: next('Continue'),
+      });
+      return;
+    }
+    const before = dealValue(ci);
+    state.refsDelivered.push(pick);
+    state.refBoost[ci] = true;
+    state.pitchMisses[ci] = 0; // a strong reference wins back the trust lost on failed pitches
+    burst(c.house.x + 0.5, c.house.y + 1, '#8ecae6', 20);
+    toast(`📜 Reference landed: +${money(dealValue(ci) - before)} ARR`, 'arr');
+    gain(XP.reference, `reference for ${c.company}`);
+    await dialog.open({
+      tone: 'good',
+      title: '📜 The story lands',
+      lines: [
+        ...ref.story.map((line) => `“${line}”`),
+        `${who}: “If it worked for ${customers[ref.from].company}, it can work for us.”`,
+      ],
+      note: `This deal is now worth ${money(dealValue(ci))} (lost ARR restored, +15%).`,
+      link: ref.link,
+      choices: next('Continue'),
+    });
+  }
+
+  // side quest: a won customer asks for more
+  async function pitchExpansion(ci) {
+    const c = customers[ci];
+    const ex = expansions[ci];
+    const who = c.contact || c.company;
+    const id = `x${ci}`;
+    const value = expansionValue(ci);
+    const misses = state.expMisses[ci] || 0;
+    const ok = await dialog.open({
+      tone: 'play',
+      speaker: c.contact ? `${c.contact} · ${c.company}` : c.company,
+      title: `📈 Expansion: ${money(value)} ARR`,
+      lines: [ex.prompt],
+      note: misses
+        ? `Down from ${money(ex.arr)} after ${misses} weak answer${misses === 1 ? '' : 's'}.`
+        : 'A weak answer costs 25% of this expansion.',
+      choices: shuffle([
+        { label: ex.answer, value: true, numbered: true },
+        ...ex.wrong.map((w) => ({ label: w, value: false, numbered: true })),
+      ]),
+    });
+    state.history.push(ok);
+    if (ok) {
+      state.expWon[ci] = value;
+      burst(c.house.x + 0.5, c.house.y + 1, '#2f6fd6', 26);
+      toast(`📈 +${money(value)} expansion ARR`, 'arr');
+      gain(reward(XP.expansion, id), `expansion: ${c.company}`);
+      syncAvatar({ quiet: true });
+      await dialog.open({
+        tone: 'good',
+        title: `📈 Expansion won: ${c.company}`,
+        lines: [`${who}: “Perfect. Let’s add it to the contract.”`, `💰 ${money(arrClosed())} of ${money(arrGoal)} goal`],
+        choices: next('Onward'),
+      });
+      return true;
+    }
+    miss(id);
+    state.expMisses[ci] = misses + 1;
+    const lost = value - expansionValue(ci);
+    save();
+    updateHud();
+    if (lost) toast(`📉 −${money(lost)} ARR`, 'loss');
+    await dialog.open({
+      tone: 'bad',
+      title: 'Not quite',
+      lines: [`${who}: “Hmm, I’m not sure that works for us.”`, `Better answer: ${ex.answer}`],
+      note: `This expansion is now worth ${money(expansionValue(ci))}. Come back to try again.`,
+      link: ex.link || c.link,
+      choices: next('Continue'),
+    });
+    return false;
+  }
+
   async function visitCustomer(ci) {
     const c = customers[ci];
     const who = c.contact || c.company;
     const speaker = c.contact ? `${c.contact} · ${c.company}` : c.company;
     const id = `c${ci}`;
     if (state.deals.includes(ci)) {
+      if (expansionOpen(ci)) return pitchExpansion(ci);
       await dialog.open({
         speaker,
         lines: [`Good to see you again! The ${c.best || 'project'} is off to a great start.`],
@@ -1905,9 +2134,15 @@ export default async function decorate(block) {
 
     const options = plays.map((p) => ({ label: p.name, value: p.name, numbered: true }));
     if (!playFor(c)) options.push({ label: c.best, value: c.best, numbered: true });
+    await offerReference(ci);
+    const value = dealValue(ci);
+    const misses = state.pitchMisses[ci] || 0;
     const pick = await dialog.open({
       speaker: 'Your strategy',
-      lines: [`Which play fits ${c.company}?`],
+      lines: [`Which play fits ${c.company}?`, `💰 On the table: ${money(value)} ARR`],
+      note: misses
+        ? `Down from ${money(c.arr)} after ${misses} failed pitch${misses === 1 ? '' : 'es'}.`
+        : `A wrong pitch costs 25% of this deal.${state.refBoost[ci] ? ' Includes +15% from your reference.' : ''}`,
       choices: shuffle(options),
     });
     const ok = same(pick, c.best);
@@ -1915,18 +2150,36 @@ export default async function decorate(block) {
     const best = playFor(c);
     if (ok) {
       state.deals.push(ci);
+      state.arrWon[ci] = value;
+      const earned = references
+        .map((r, ri) => ri)
+        .filter((ri) => references[ri].from === ci && !state.letters.includes(ri));
+      state.letters.push(...earned);
       syncAvatar({ quiet: true });
       burst(c.house.x + 0.5, c.house.y + 1, '#3ddc84', 30);
+      toast(`💰 +${money(value)} ARR`, 'arr');
       gain(reward(XP.deal, id), `deal won: ${c.company}`);
       await dialog.open({
         tone: 'good',
         title: `🤝 Deal won: ${c.company}`,
-        lines: [`${who}: “That is exactly what we need. Let’s do it.”`],
+        lines: [
+          `${who}: “That is exactly what we need. Let’s do it.”`,
+          `💰 ${money(value)} ARR closed · ${money(arrClosed())} of ${money(arrGoal)} goal`,
+          earned.length ? `📜 ${c.contact ? c.contact.split(',')[0] : c.company} hands you a reference letter. Share it with a prospect who has a similar problem.` : '',
+        ],
+        note: expansions[ci] ? `Side quest: ${c.company} may want more later. Look for the blue + on their door.` : null,
         choices: next('Onward'),
       });
+      if (earned.length) toast(`📜 Reference letter: ${c.company}`, 'skill');
+      updateHud();
       return true;
     }
     miss(id);
+    state.pitchMisses[ci] = misses + 1;
+    const lost = value - dealValue(ci);
+    save();
+    updateHud();
+    if (lost) toast(`📉 −${money(lost)} ARR`, 'loss');
     await dialog.open({
       tone: 'bad',
       title: 'Not convinced',
@@ -1934,7 +2187,9 @@ export default async function decorate(block) {
         `${who}: “I don’t see how that solves our problem.”`,
         `Better fit: ${c.best}${best?.description ? `. ${best.description}` : ''}`,
       ],
-      note: 'No XP this time. Knock again to propose the better play.',
+      note: lost
+        ? `−${money(lost)} ARR: this deal is now worth ${money(dealValue(ci))}. Knock again to propose the better play.`
+        : `This deal is at its floor (${money(dealValue(ci))}). Knock again to propose the better play.`,
       link: best?.link || c.link,
       choices: next('Continue'),
     });
@@ -2007,6 +2262,10 @@ export default async function decorate(block) {
           levelLine,
           summary,
           customers.length ? `Deals won: ${state.deals.length}/${customers.length}` : '',
+          customers.length ? `💰 ARR closed: ${money(arrClosed())} of ${money(arrGoal)} (${Math.round((arrClosed() / arrGoal) * 100)}%)` : '',
+          references.length || expansions.some(Boolean)
+            ? `Side quests: ${state.refsDelivered.length}/${references.length} references · ${Object.keys(state.expWon).length}/${expansions.filter(Boolean).length} expansions`
+            : '',
         ],
         choices: [
           { label: 'Copy result', value: 'copy', primary: true },
@@ -2015,7 +2274,7 @@ export default async function decorate(block) {
       });
       again = choice === 'copy';
       if (again) {
-        const text = `Questline · ${avatar?.name || 'A seller'} cleared ${content.title} 🏅\n${levelLine}\n${summary}\n${grid}\n${window.location.href}`;
+        const text = `Questline · ${avatar?.name || 'A seller'} cleared ${content.title} 🏅\n${levelLine}\n💰 ${money(arrClosed())} of ${money(arrGoal)} ARR\n${summary}\n${grid}\n${window.location.href}`;
         try {
           await navigator.clipboard.writeText(text);
         } catch (e) {
@@ -2132,6 +2391,9 @@ export default async function decorate(block) {
       }
       for (let ci = 0; ci < customers.length; ci += 1) {
         while (!state.deals.includes(ci)) await visitCustomer(ci);
+      }
+      for (let ci = 0; ci < customers.length; ci += 1) {
+        while (expansionOpen(ci)) await visitCustomer(ci);
       }
       for (let gi = 0; gi < numGates; gi += 1) {
         while (!state.gates[gi]) await challengeGate(gi, { skipIntro: true });
@@ -2365,7 +2627,11 @@ export default async function decorate(block) {
       const x = c.house.x * TILE;
       const y = c.house.y * TILE;
       const bob = Math.round(Math.sin(t / 250 + i) * 1.5);
-      if (state.deals.includes(i)) drawCheck(g, x + 13, y + 11 + bob);
+      if (expansionOpen(i)) {
+        bang(x + 13, y + 11, i + 2, '#fff', '#2f6fd6');
+        rect(g, '#fff', x + 14, y + 15 + bob, 4, 1); // turn the "!" into a "+"
+        glow(g, x + 16, y + 15, 14, '#10306a', 0.9);
+      } else if (state.deals.includes(i)) drawCheck(g, x + 13, y + 11 + bob);
       else if (missingFor(c).length) drawLock(g, x + 13, y + 11 + bob);
       else {
         bang(x + 13, y + 11, i + 2, INK, '#f4d35e');
