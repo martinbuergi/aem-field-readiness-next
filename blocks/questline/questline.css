@@ -47,26 +47,73 @@
   align-items: center;
 }
 
-.questline .questline-conf {
+.questline .questline-levelbox {
   display: inline-flex;
-  gap: 3px;
+  gap: 8px;
   align-items: center;
+}
+
+.questline .questline-level {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--ql-gold);
+  color: var(--ql-night);
+  font-weight: 700;
+}
+
+.questline .questline-xpbar {
+  position: relative;
+  width: 80px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--ql-night-2);
+}
+
+.questline .questline-xpfill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #f4d35e, #ffb703);
+  transition: width 0.4s ease-out;
+}
+
+.questline .questline-xptext {
+  font-size: 12px;
+  opacity: 0.8;
 }
 
 .questline .questline-label {
   margin-right: 4px;
 }
 
-.questline .questline-pip {
-  width: 10px;
-  height: 10px;
-  transform: rotate(45deg) scale(0.8);
-  border: 2px solid var(--ql-gold);
-  background: transparent;
+/* skills strip */
+.questline .questline-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 0 4px 8px;
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
 }
 
-.questline .questline-pip.full {
-  background: var(--ql-gold);
+.questline .questline-chip {
+  padding: 2px 8px;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.questline .questline-chip-expertise {
+  color: var(--ql-gold);
+}
+
+.questline .questline-chip-play {
+  color: #8ecae6;
+}
+
+.questline .questline-chip-empty {
+  opacity: 0.6;
 }
 
 .questline .questline-objective {
@@ -158,6 +205,92 @@
   font-weight: 700;
 }
 
+/* expert nameplate */
+.questline .questline-plate {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.5cqw 1cqw;
+  border: 0.25cqw solid var(--ql-gold);
+  border-radius: 0.8cqw;
+  background: rgb(20 22 45 / 92%);
+  color: var(--ql-ink);
+  line-height: 1.25;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+}
+
+.questline .questline-plate[hidden] {
+  display: none;
+}
+
+.questline .questline-plate-name {
+  font-size: 1.4cqw;
+  font-weight: 700;
+}
+
+.questline .questline-plate-role {
+  font-family: var(--ql-pixel-font);
+  font-size: 1.25cqw;
+  color: var(--ql-gold);
+}
+
+/* XP / skill / level toasts */
+.questline .questline-toasts {
+  position: absolute;
+  top: 1.2cqw;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6cqw;
+  align-items: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.questline .questline-toast {
+  padding: 0.5cqw 1.4cqw;
+  border-radius: 999px;
+  background: rgb(20 22 45 / 92%);
+  color: var(--ql-gold);
+  font-family: var(--ql-pixel-font);
+  font-size: max(12px, 1.5cqw);
+  line-height: 1.4;
+  white-space: nowrap;
+  animation: questline-toast 2.8s ease-out forwards;
+}
+
+.questline .questline-toast-skill {
+  color: #8ecae6;
+}
+
+.questline .questline-toast-level {
+  background: var(--ql-gold);
+  color: var(--ql-night);
+  font-size: max(14px, 2cqw);
+  font-weight: 700;
+}
+
+@keyframes questline-toast {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  10%,
+  80% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
 .questline.questline-story .questline-stage {
   filter: grayscale(0.6) brightness(0.6);
 }
@@ -209,6 +342,13 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ql-gold);
+}
+
+.questline .questline-role {
+  margin: -4px 0 8px;
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+  color: #8ecae6;
 }
 
 .questline .questline-panel-boss .questline-speaker {

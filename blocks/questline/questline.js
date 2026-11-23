@@ -8,6 +8,7 @@
  *   Title     | <region name>
  *   Intro     | <text shown on the start screen>
  *   Boss      | <boss name>
+ *   Expert    | <name> | <expertise, e.g. "Adobe Brand Visibility"> | <dialogue> | <link>
  *   NPC       | <name> | <dialogue, one paragraph per line> | <link to collateral>
  *   Puzzle    | <question> | <correct answer> | <wrong answer> | ... | <link>
  *   Objection | <objection> | <best response> | <weak response> | ... | <link>
@@ -17,8 +18,9 @@
  *             | <best play name> | <link>
  * Puzzles are spread across up to three rune gates; objections make up the boss fight.
  * Each customer lives in one of the village houses (max 3). To propose a strategy the
- * player must first learn every play from the advisors (NPCs); all deals must be won
- * before the boss accepts the challenge.
+ * player must first learn every play from the experts; all deals must be won before the
+ * boss accepts the challenge. The player starts at level 0 and earns XP for every
+ * conversation and correct answer; expertise areas and plays become skills.
  * Any cell that only contains a link is treated as the "learn more" link.
  */
 
@@ -26,7 +28,17 @@ const TILE = 16;
 const COLS = 24;
 const ROWS = 16;
 const SPEED = 6; // tiles per second
-const START_CONFIDENCE = 3;
+const XP_PER_LEVEL = 50;
+const XP = {
+  meet: 10, // first conversation with an expert / villager
+  hear: 5, // first time a customer shares their situation
+  play: 15, // learning a play
+  deal: 25, // winning a customer deal
+  gate: 10, // rune gate question
+  objection: 15, // boss objection countered
+  shrine: 10, // studying at the shrine
+};
+const levelOf = (xp) => Math.floor(xp / XP_PER_LEVEL);
 const MAX_GATES = 3;
 
 const DIRS = {
@@ -133,6 +145,16 @@ function parseContent(block) {
     const img = row.querySelector('img');
 
     switch (key) {
+      case 'expert':
+        if (pos[0]) {
+          content.npcs.push({
+            name: pos[0],
+            expertise: pos[1] || '',
+            lines: posCells[2] ? cellLines(posCells[2]) : [],
+            link,
+          });
+        }
+        break;
       case 'play':
         if (pos[0]) {
           content.plays.push({
@@ -579,7 +601,7 @@ function createDialog(root, overlay) {
   let openedAt = 0;
 
   function open({
-    speaker, title, lines = [], link, note, tone, choices,
+    speaker, role, title, lines = [], link, note, tone, choices,
   }) {
     return new Promise((resolve) => {
       const panel = el('div', {
@@ -588,6 +610,7 @@ function createDialog(root, overlay) {
         'aria-label': speaker || title || 'Message',
       });
       if (speaker) panel.append(el('p', { class: 'questline-speaker', text: speaker }));
+      if (role) panel.append(el('p', { class: 'questline-role', text: role }));
       if (title) panel.append(el('p', { class: 'questline-panel-title', text: title }));
       lines.filter(Boolean).forEach((line) => panel.append(el('p', { class: 'questline-text', text: line })));
       if (note) panel.append(el('p', { class: 'questline-note', text: note }));
@@ -673,8 +696,11 @@ export default function decorate(block) {
     deals: [],
     solved: [],
     gates: Array.from({ length: MAX_GATES }, (_, i) => i >= numGates),
-    maxConf: START_CONFIDENCE,
-    conf: START_CONFIDENCE,
+    xp: 0,
+    heard: [],
+    missed: [],
+    shrine: false,
+    bossSolved: [],
     bossHp: maxHp,
     won: false,
     history: [],
@@ -684,6 +710,11 @@ export default function decorate(block) {
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
   if (!Array.isArray(state.gates) || state.gates.length !== MAX_GATES) state.gates = fresh().gates;
+  state.bossHp = maxHp - (state.bossSolved || []).length;
+  const skills = () => [
+    ...state.talked.filter((ni) => npcs[ni]?.expertise).map((ni) => ({ kind: 'expertise', name: npcs[ni].expertise })),
+    ...state.plays.filter((pi) => plays[pi]).map((pi) => ({ kind: 'play', name: plays[pi].name })),
+  ];
   const unlearned = (ni) => plays
     .map((p, pi) => pi)
     .filter((pi) => plays[pi].teacher === ni && !state.plays.includes(pi));
@@ -704,7 +735,8 @@ export default function decorate(block) {
   const g = canvas.getContext('2d');
   g.imageSmoothingEnabled = false;
 
-  const confEl = el('span', { class: 'questline-conf' });
+  const levelEl = el('span', { class: 'questline-levelbox' });
+  const skillsEl = el('div', { class: 'questline-skills' });
   const insightEl = el('span', { class: 'questline-stat' });
   const dealEl = el('span', { class: 'questline-stat' });
   const gateEl = el('span', { class: 'questline-stat' });
@@ -738,6 +770,29 @@ export default function decorate(block) {
   });
   if (signs.length) stage.append(el('div', { class: 'questline-signs' }, signs));
 
+  // expert nameplate: shown above the nearest expert when the player walks close
+  const plateName = el('span', { class: 'questline-plate-name' });
+  const plateRole = el('span', { class: 'questline-plate-role' });
+  const plate = el('div', { class: 'questline-plate', hidden: true }, plateName, plateRole);
+  stage.append(plate);
+  let plateFor = -1;
+  function updatePlate(show) {
+    let nearest = -1;
+    if (show) {
+      nearest = npcs.findIndex((n) => n.expertise
+        && Math.max(Math.abs(n.x - state.x), Math.abs(n.y - state.y)) <= 2);
+    }
+    if (nearest === plateFor) return;
+    plateFor = nearest;
+    plate.hidden = nearest < 0;
+    if (nearest < 0) return;
+    const n = npcs[nearest];
+    plateName.textContent = n.name;
+    plateRole.textContent = `★ Expert for ${n.expertise}`;
+    plate.style.left = pct(n.x * TILE + TILE / 2, COLS * TILE);
+    plate.style.top = pct(n.y * TILE - 12, ROWS * TILE);
+  }
+
   const padBtn = (dir, label) => el('button', {
     type: 'button', class: `questline-pad-${dir}`, 'aria-label': `Move ${dir}`, 'data-dir': dir, text: label,
   });
@@ -757,8 +812,9 @@ export default function decorate(block) {
       'div',
       { class: 'questline-hud' },
       el('p', { class: 'questline-title', text: content.title }),
-      el('div', { class: 'questline-stats' }, confEl, insightEl, customers.length ? dealEl : null, gateEl),
+      el('div', { class: 'questline-stats' }, levelEl, insightEl, customers.length ? dealEl : null, gateEl),
     ),
+    skillsEl,
     objectiveEl,
     screen,
     hintEl,
@@ -770,11 +826,26 @@ export default function decorate(block) {
 
   /* HUD */
   function updateHud() {
-    confEl.replaceChildren(
-      el('span', { class: 'questline-label', text: 'Confidence' }),
-      ...Array.from({ length: state.maxConf }, (_, i) => el('span', { class: `questline-pip${i < state.conf ? ' full' : ''}` })),
+    const into = state.xp % XP_PER_LEVEL;
+    const fill = el('span', { class: 'questline-xpfill' });
+    fill.style.width = `${(into / XP_PER_LEVEL) * 100}%`;
+    levelEl.replaceChildren(
+      el('span', { class: 'questline-level', text: `Lv ${levelOf(state.xp)}` }),
+      el('span', { class: 'questline-xpbar' }, fill),
+      el('span', { class: 'questline-xptext', text: `${into}/${XP_PER_LEVEL} XP` }),
     );
-    confEl.setAttribute('aria-label', `Confidence ${state.conf} of ${state.maxConf}`);
+    levelEl.setAttribute('aria-label', `Level ${levelOf(state.xp)}, ${state.xp} XP total`);
+
+    const learned = skills();
+    skillsEl.replaceChildren(
+      el('span', { class: 'questline-label', text: 'Skills' }),
+      ...(learned.length
+        ? learned.map((s) => el('span', {
+          class: `questline-chip questline-chip-${s.kind}`,
+          text: `${s.kind === 'play' ? '📘' : '★'} ${s.name}`,
+        }))
+        : [el('span', { class: 'questline-chip-empty', text: 'None yet. Talk to people to learn.' })]),
+    );
     insightEl.textContent = plays.length
       ? `Plays ${state.plays.length}/${plays.length}`
       : `Insights ${state.talked.length}/${npcs.length}`;
@@ -784,7 +855,7 @@ export default function decorate(block) {
     const nextGate = state.gates.findIndex((open) => !open);
     let objective;
     if (state.won) objective = `🏅 ${content.title} cleared. Replay any time.`;
-    else if (state.plays.length < plays.length) objective = 'Objective: learn the plays. Advisors with ! teach them';
+    else if (state.plays.length < plays.length) objective = 'Objective: learn the plays. Experts with a blue ! teach them';
     else if (state.deals.length < customers.length) objective = 'Objective: knock on customer doors and propose the right play';
     else if (nextGate >= 0) objective = `Objective: open Rune Gate ${nextGate + 1}`;
     else objective = `Objective: defeat ${content.bossName}`;
@@ -814,7 +885,10 @@ export default function decorate(block) {
     const x = state.x + dx;
     const y = state.y + dy;
     const n = npcAt(x, y);
-    if (n >= 0) return { type: 'npc', index: n, label: `talk to ${npcs[n].name}` };
+    if (n >= 0) {
+      const role = npcs[n].expertise ? ` (expert for ${npcs[n].expertise})` : '';
+      return { type: 'npc', index: n, label: `talk to ${npcs[n].name}${role}` };
+    }
     const ci = customerAt(x, y);
     if (ci >= 0) return { type: 'customer', index: ci, label: `knock on ${customers[ci].company}'s door` };
     const gi = gateAt(x, y);
@@ -839,6 +913,35 @@ export default function decorate(block) {
     }
   }
 
+  /* progression */
+  const toasts = el('div', { class: 'questline-toasts', 'aria-live': 'polite' });
+  stage.append(toasts);
+  function toast(text, kind = 'xp') {
+    const t = el('div', { class: `questline-toast questline-toast-${kind}`, text });
+    toasts.append(t);
+    setTimeout(() => t.remove(), 2800);
+  }
+
+  function gain(amount, label) {
+    if (amount <= 0) return;
+    const before = levelOf(state.xp);
+    state.xp += amount;
+    toast(`+${amount} XP · ${label}`);
+    const after = levelOf(state.xp);
+    if (after > before) {
+      toast(`⬆ Level ${after}!`, 'level');
+      burst(state.x, state.y, '#f4d35e', 30);
+    }
+    updateHud();
+    save();
+  }
+  // full XP on the first try, half after the answer has been revealed
+  const reward = (base, id) => (state.missed.includes(id) ? Math.ceil(base / 2) : base);
+  const miss = (id) => {
+    if (!state.missed.includes(id)) state.missed.push(id);
+    save();
+  };
+
   /* encounters */
   const next = (label = 'Next ▸') => [{ label, value: true, primary: true }];
 
@@ -851,50 +954,33 @@ export default function decorate(block) {
       speaker, lines, tone: speaker.startsWith(content.bossName) ? 'boss' : null, choices: options,
     });
     state.history.push(ok);
-    if (!ok) state.conf = Math.max(0, state.conf - 1);
-    updateHud();
     save();
     return ok;
-  }
-
-  async function defeat() {
-    await dialog.open({
-      tone: 'bad',
-      title: 'Deal lost',
-      lines: ['Your confidence ran out. Regroup in the village, review the collateral, and try again. Your progress is kept.'],
-      choices: next('Regroup'),
-    });
-    state.conf = state.maxConf;
-    state.bossHp = maxHp;
-    state.x = world.start.x;
-    state.y = world.start.y;
-    state.dir = 'right';
-    motion.moving = false;
-    updateHud();
-    save();
   }
 
   async function talkTo(i) {
     const npc = npcs[i];
     const lines = npc.lines.length ? npc.lines : ['…'];
     const first = !state.talked.includes(i);
+    const role = npc.expertise ? `★ Expert for ${npc.expertise}` : null;
+    let note = null;
+    if (first) note = npc.expertise ? `★ New skill: ${npc.expertise} · +${XP.meet} XP` : `+${XP.meet} XP`;
     for (let k = 0; k < lines.length; k += 1) {
       const last = k === lines.length - 1;
       await dialog.open({
         speaker: npc.name,
+        role,
         lines: [lines[k]],
         link: last ? npc.link : null,
-        note: last && first ? '✨ Insight gained: +1 max confidence' : null,
+        note: last ? note : null,
         choices: next(last ? 'Got it' : 'Next ▸'),
       });
     }
     if (first) {
       state.talked.push(i);
-      state.maxConf += 1;
-      state.conf = state.maxConf;
       burst(npc.x, npc.y, '#f4d35e', 12);
-      updateHud();
-      save();
+      if (npc.expertise) toast(`★ New skill: ${npc.expertise}`, 'skill');
+      gain(XP.meet, `met ${npc.name}`);
     }
     const teach = unlearned(i);
     for (let k = 0; k < teach.length; k += 1) {
@@ -902,16 +988,17 @@ export default function decorate(block) {
       await dialog.open({
         tone: 'play',
         speaker: npc.name,
+        role,
         title: `📘 New play: ${play.name}`,
         lines: [play.description],
         link: play.link,
-        note: `Plays learned: ${state.plays.length + 1}/${plays.length}`,
+        note: `+${XP.play} XP · Playbook ${state.plays.length + 1}/${plays.length}`,
         choices: next('Learned it'),
       });
       state.plays.push(teach[k]);
       burst(npc.x, npc.y, '#8ecae6', 14);
-      updateHud();
-      save();
+      toast(`📘 New play: ${play.name}`, 'skill');
+      gain(XP.play, play.name);
     }
   }
 
@@ -919,6 +1006,7 @@ export default function decorate(block) {
     const c = customers[ci];
     const who = c.contact || c.company;
     const speaker = c.contact ? `${c.contact} · ${c.company}` : c.company;
+    const id = `c${ci}`;
     if (state.deals.includes(ci)) {
       await dialog.open({
         speaker,
@@ -931,12 +1019,16 @@ export default function decorate(block) {
     for (let k = 0; k < lines.length; k += 1) {
       await dialog.open({ speaker, lines: [lines[k]], choices: next() });
     }
+    if (!state.heard.includes(ci)) {
+      state.heard.push(ci);
+      gain(XP.hear, `discovery at ${c.company}`);
+    }
     if (!c.best) return true;
     if (state.plays.length < plays.length) {
       await dialog.open({
         speaker,
         lines: ['So… what would you suggest?'],
-        note: `You know ${state.plays.length} of ${plays.length} plays. Talk to the advisors (!) to learn them all before proposing a strategy.`,
+        note: `Your playbook has ${state.plays.length} of ${plays.length} plays. Talk to the experts (!) to learn them all before proposing a strategy.`,
         choices: next('I’ll be back'),
       });
       return false;
@@ -955,8 +1047,7 @@ export default function decorate(block) {
     if (ok) {
       state.deals.push(ci);
       burst(c.house.x + 0.5, c.house.y + 1, '#3ddc84', 30);
-      updateHud();
-      save();
+      gain(reward(XP.deal, id), `deal won: ${c.company}`);
       await dialog.open({
         tone: 'good',
         title: `🤝 Deal won: ${c.company}`,
@@ -965,21 +1056,18 @@ export default function decorate(block) {
       });
       return true;
     }
-    state.conf = Math.max(0, state.conf - 1);
-    updateHud();
-    save();
+    miss(id);
     await dialog.open({
       tone: 'bad',
       title: 'Not convinced',
       lines: [
         `${who}: “I don’t see how that solves our problem.”`,
         `Better fit: ${c.best}${best?.description ? `. ${best.description}` : ''}`,
-        '−1 confidence',
       ],
+      note: 'No XP this time. Knock again to propose the better play.',
       link: best?.link || c.link,
       choices: next('Continue'),
     });
-    if (state.conf <= 0) await defeat();
     return false;
   }
 
@@ -995,20 +1083,22 @@ export default function decorate(block) {
     }
     for (let k = 0; k < pending.length; k += 1) {
       const q = content.puzzles[pending[k]];
+      const id = `g${pending[k]}`;
       const ok = await ask(q, `Rune Gate ${gi + 1}`);
       if (!ok) {
+        miss(id);
         await dialog.open({
           tone: 'bad',
           title: 'Not quite',
-          lines: [`Correct answer: ${q.answer}`, '−1 confidence'],
+          lines: [`Correct answer: ${q.answer}`],
+          note: 'No XP this time. Read the rune again when you are ready.',
           link: q.link,
           choices: next('Continue'),
         });
-        if (state.conf <= 0) await defeat();
         return false;
       }
       state.solved.push(pending[k]);
-      save();
+      gain(reward(XP.gate, id), 'rune answered');
       if (k < pending.length - 1) {
         await dialog.open({ tone: 'good', title: 'Correct!', choices: next('Continue') });
       }
@@ -1033,6 +1123,7 @@ export default function decorate(block) {
     const total = state.history.length || 1;
     const mins = Math.floor(state.finishedIn / 60000);
     const secs = String(Math.floor((state.finishedIn % 60000) / 1000)).padStart(2, '0');
+    const levelLine = `Level ${levelOf(state.xp)} · ${state.xp} XP · ${skills().length} skills`;
     const summary = `Accuracy ${Math.round((right / total) * 100)}% · ${right}/${total} correct · ${mins}:${secs}`;
     const grid = state.history.slice(-20).map((ok) => (ok ? '🟩' : '🟥')).join('');
     let again = true;
@@ -1042,10 +1133,9 @@ export default function decorate(block) {
         title: `🏅 ${content.title} cleared!`,
         lines: [
           `${content.bossName} has been defeated.`,
+          levelLine,
           summary,
-          customers.length
-            ? `Deals won: ${state.deals.length}/${customers.length} · Plays mastered: ${state.plays.length}/${plays.length}`
-            : `Insights collected: ${state.talked.length}/${npcs.length}`,
+          customers.length ? `Deals won: ${state.deals.length}/${customers.length}` : '',
         ],
         choices: [
           { label: 'Copy result', value: 'copy', primary: true },
@@ -1054,7 +1144,7 @@ export default function decorate(block) {
       });
       again = choice === 'copy';
       if (again) {
-        const text = `Questline · ${content.title} cleared 🏅\n${summary}\n${grid}\n${window.location.href}`;
+        const text = `Questline · ${content.title} cleared 🏅\n${levelLine}\n${summary}\n${grid}\n${window.location.href}`;
         try {
           await navigator.clipboard.writeText(text);
         } catch (e) {
@@ -1065,7 +1155,7 @@ export default function decorate(block) {
     }
   }
 
-  async function fightBoss({ skipIntro = false } = {}) {
+  async function fightBoss({ skipIntro = false, story = false } = {}) {
     if (state.deals.length < customers.length) {
       await dialog.open({
         tone: 'boss',
@@ -1085,49 +1175,54 @@ export default function decorate(block) {
       });
       if (!go) return false;
     }
-    let queue = content.objections.map((_, i) => i).slice(maxHp - state.bossHp);
-    while (state.bossHp > 0 && state.conf > 0) {
-      const q = content.objections[queue[0]];
+    let queue = content.objections.map((_, i) => i).filter((i) => !state.bossSolved.includes(i));
+    while (queue.length) {
+      const idx = queue[0];
+      const q = content.objections[idx];
+      const id = `o${idx}`;
       const ok = await ask(q, `${content.bossName} objects`, [`“${q.prompt}”`, 'Pick your best response:']);
       if (ok) {
         queue = queue.slice(1);
-        state.bossHp -= 1;
+        state.bossSolved.push(idx);
+        state.bossHp = maxHp - state.bossSolved.length;
         bossHitAt = performance.now();
         burst(world.boss.x + 0.5, world.boss.y + 0.5, '#ffffff', 16);
-        save();
+        gain(reward(XP.objection, id), 'objection countered');
         if (state.bossHp > 0) {
           await dialog.open({
             tone: 'good', title: 'Direct hit!', lines: [`${content.bossName} staggers. ${state.bossHp} objection${state.bossHp === 1 ? '' : 's'} left.`], choices: next('Keep going'),
           });
         }
       } else {
-        queue = [...queue.slice(1), queue[0]];
-        await dialog.open({
+        miss(id);
+        queue = [...queue.slice(1), idx];
+        const goOn = await dialog.open({
           tone: 'bad',
           title: 'Blocked!',
-          lines: [`${content.bossName} shrugs it off. Better response: ${q.answer}`, '−1 confidence'],
+          lines: [`${content.bossName} shrugs it off. Better response: ${q.answer}`],
+          note: 'No XP this time. The objection will come back.',
           link: q.link,
-          choices: next('Continue'),
+          choices: story ? next('Continue') : [
+            { label: 'Continue', value: true, primary: true },
+            { label: 'Retreat and review', value: false },
+          ],
         });
+        if (!goOn) return false;
       }
     }
-    if (state.bossHp <= 0) {
-      await victory();
-      return true;
-    }
-    await defeat();
-    return false;
+    await victory();
+    return true;
   }
 
   async function visitShrine() {
-    state.conf = state.maxConf;
+    const first = !state.shrine;
+    state.shrine = true;
     burst(world.shrine.x, world.shrine.y, '#5ee7ff', 16);
-    updateHud();
-    save();
+    if (first) gain(XP.shrine, 'studied at the shrine');
     await dialog.open({
       speaker: 'Shrine of Insight',
-      lines: [content.shrine?.text || 'A calm light washes over you. Confidence restored.'],
-      note: 'Confidence fully restored',
+      lines: [content.shrine?.text || 'The crystal shows you the key collateral.'],
+      note: first ? `+${XP.shrine} XP` : 'You have already studied here.',
       link: content.shrine?.link,
       choices: next('Thanks'),
     });
@@ -1168,7 +1263,7 @@ export default function decorate(block) {
       for (let gi = 0; gi < numGates; gi += 1) {
         while (!state.gates[gi]) await challengeGate(gi, { skipIntro: true });
       }
-      while (state.bossHp > 0) await fightBoss({ skipIntro: state.bossHp < maxHp });
+      while (state.bossHp > 0) await fightBoss({ skipIntro: state.bossHp < maxHp, story: true });
       state.x = world.boss.x - 1;
       state.y = world.boss.y + 1;
       state.dir = 'right';
@@ -1303,6 +1398,7 @@ export default function decorate(block) {
       hintEl.textContent = hint || ' ';
       lastHint = hint;
     }
+    updatePlate(!busy);
   }
 
   function render(t) {
