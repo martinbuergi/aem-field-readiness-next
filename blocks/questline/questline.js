@@ -20,11 +20,18 @@
  *             The more skills a customer needs, the posher their house (cottage, townhouse,
  *             manor).
  * Puzzles are spread across up to three rune gates; objections make up the boss fight.
- * Each customer lives in one of the village houses (max 3). To propose a strategy the
+ * Each customer lives in a house: three in the village, two in the grove behind Rune Gate 1
+ * and two on the lake islands behind Rune Gate 2 (max 7). To propose a strategy the
  * player needs the skills that customer requires; all deals must be won before the
  * boss accepts the challenge. The player starts at level 0 and earns XP for every
  * conversation and correct answer; expertise areas and plays become skills.
  * Any cell that only contains a link is treated as the "learn more" link.
+ *
+ * Avatar: on the first visit players create their seller (name, hair style, hair colour,
+ * skin tone). It is kept in the browser and, when the game runs as a DA app
+ * (da.live/app/<org>/<site>/tools/questline, signed in with Adobe), also saved as a row
+ * in the DA sheet "<content path>-players" (e.g. /drafts/questline-players).
+ * The block can load its rows from another page: <div class="questline" data-source="/path">.
  */
 
 const TILE = 16;
@@ -244,22 +251,30 @@ function buildWorld() {
   for (let y = 4; y < 14; y += 1) set(4, y, ':');
   [[1, 5], [2, 13], [7, 5], [6, 9], [3, 10], [8, 13], [5, 1]].forEach(([x, y]) => set(x, y, 'f'));
   [[8, 1], [1, 1], [8, 10], [1, 14]].forEach(([x, y]) => set(x, y, 't'));
-  const houses = [{ x: 1, y: 2 }, { x: 6, y: 2 }, { x: 6, y: 11 }];
-  houses.forEach(({ x, y }) => {
-    set(x, y, 'H'); set(x + 1, y, 'H'); set(x, y + 1, 'H'); set(x + 1, y + 1, 'H');
-  });
+  // village (3), grove (2, behind Rune Gate 1), lake islands (2, behind Rune Gate 2)
+  const houses = [
+    { x: 1, y: 2 }, { x: 6, y: 2 }, { x: 6, y: 11 },
+    { x: 12, y: 1 }, { x: 12, y: 9 },
+    { x: 16, y: 1 }, { x: 15, y: 12 },
+  ];
 
   // grove: winding path to the second gate, shrine in the south
   [[10, 8], [11, 8], [11, 7], [11, 6], [11, 5], [11, 4], [12, 4], [13, 4],
-    [11, 9], [11, 10], [11, 11]].forEach(([x, y]) => set(x, y, ':'));
-  [[10, 2], [13, 2], [10, 13], [13, 13], [13, 8], [10, 5], [13, 10], [12, 1], [10, 11]]
-    .forEach(([x, y]) => set(x, y, 't'));
-  [[12, 8], [10, 10], [12, 13]].forEach(([x, y]) => set(x, y, 'f'));
+    [11, 9], [11, 10], [11, 11], [11, 12], [11, 13]].forEach(([x, y]) => set(x, y, ':'));
+  [[10, 2], [10, 5], [10, 11], [10, 13], [13, 13], [13, 6]].forEach(([x, y]) => set(x, y, 't'));
+  [[10, 10], [10, 3], [13, 7]].forEach(([x, y]) => set(x, y, 'f'));
 
-  // lake with a plank bridge
+  // lake with a plank bridge between two small islands
   for (let x = 15; x <= 17; x += 1) for (let y = 1; y < ROWS - 1; y += 1) set(x, y, '~');
+  for (let x = 15; x <= 17; x += 1) for (let y = 1; y <= 3; y += 1) set(x, y, '.');
+  [[17, 12], [17, 13], [15, 14], [16, 14], [17, 14]].forEach(([x, y]) => set(x, y, '.'));
   set(15, 4, '='); set(17, 11, '=');
   for (let y = 4; y <= 11; y += 1) set(16, y, '=');
+  set(17, 3, 'f'); set(17, 14, 'f');
+
+  houses.forEach(({ x, y }) => {
+    set(x, y, 'H'); set(x + 1, y, 'H'); set(x, y + 1, 'H'); set(x + 1, y + 1, 'H');
+  });
 
   // arena
   for (let x = 19; x <= 22; x += 1) for (let y = 1; y < ROWS - 1; y += 1) set(x, y, ',');
@@ -278,7 +293,7 @@ function buildWorld() {
     gates,
     start: { x: 2, y: 8 },
     npcSpots: [{ x: 3, y: 6 }, { x: 7, y: 7 }, { x: 2, y: 11 }, { x: 5, y: 13 }, { x: 12, y: 6 }],
-    shrine: { x: 12, y: 11 },
+    shrine: { x: 12, y: 13 },
     boss: { x: 20, y: 7 }, // 2x2
   };
 }
@@ -336,6 +351,81 @@ const PALETTES = {
     h: '#5d4037', s: '#c68e6a', e: '#1a1a2e', m: '#a86f4e', j: '#b03a2e', w: '#fdecea', t: '#f4d35e', p: '#212121', b: '#111',
   },
 };
+
+// hair styles paint extra hair pixels onto the base (short) head: [row, [cols]]
+const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+const HAIR_STYLES = [
+  { id: 'short', label: 'Short' },
+  {
+    id: 'spiky',
+    label: 'Spiky',
+    paint: {
+      down: [[0, [4, 6, 7, 9, 11]], [1, [4, 11]], [2, [3, 12]]],
+      up: [[0, [4, 6, 7, 9, 11]], [1, [4, 11]], [2, [3, 12]]],
+      side: [[0, [5, 7, 9]], [1, [4, 11]], [2, [3, 12]]],
+    },
+  },
+  {
+    id: 'long',
+    label: 'Long',
+    paint: {
+      down: [3, 4, 5, 6, 7, 8].map((r) => [r, [3, 12]]),
+      up: [[3, span(3, 12)], [4, span(3, 12)], [5, span(3, 12)], [6, span(3, 12)],
+        [7, span(4, 11)], [8, span(4, 11)]],
+      side: [[3, [3, 4]], [4, [3, 4]], [5, [3, 4]], [6, [3, 4, 5]], [7, [3, 4, 5]], [8, [3, 4]]],
+    },
+  },
+  {
+    id: 'curly',
+    label: 'Curly',
+    paint: {
+      down: [[0, span(4, 11)], [1, span(3, 12)], [2, span(2, 13)], [3, [2, 3, 12, 13]],
+        [4, [2, 3, 12, 13]], [5, [3, 12]]],
+      up: [[0, span(4, 11)], [1, span(3, 12)], [2, span(2, 13)], [3, span(2, 13)],
+        [4, span(2, 13)], [5, span(3, 12)]],
+      side: [[0, span(4, 10)], [1, span(3, 11)], [2, span(2, 12)],
+        [3, [2, 3]], [4, [2, 3]], [5, [3]]],
+    },
+  },
+  {
+    id: 'bun',
+    label: 'Bun',
+    paint: {
+      down: [[0, span(6, 9)]],
+      up: [[0, span(6, 9)]],
+      side: [[1, [2, 3, 4]], [2, [2, 3]]],
+    },
+  },
+];
+const HAIR_COLORS = [
+  ['Black', '#1f1a17'], ['Dark brown', '#3b2a1a'], ['Brown', '#7a4b2a'], ['Auburn', '#a0452a'],
+  ['Blonde', '#e8c36a'], ['Silver', '#c9ccd6'], ['Pink', '#ff6fae'], ['Blue', '#3f7ad9'],
+];
+const SKIN_TONES = [
+  ['Light', '#f9dcc4'], ['Fair', '#f2c79b'], ['Medium', '#d9a066'],
+  ['Tan', '#b87a4b'], ['Brown', '#8d5a3b'], ['Deep', '#5c3a24'],
+];
+const NPC_HAIR = ['long', 'short', 'curly', 'bun', 'spiky'];
+const DEFAULT_AVATAR = {
+  name: '', style: 'short', hair: '#3b2a1a', skin: '#f2c79b',
+};
+
+function tint(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v) => Math.max(0, Math.min(255, Math.round(v * f))).toString(16).padStart(2, '0');
+  return `#${ch((n >> 16) & 255)}${ch((n >> 8) & 255)}${ch(n & 255)}`;
+}
+const isDark = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 110;
+};
+
+function headRows(facing, style) {
+  const rows = [...HEAD[facing], ...TORSO[facing]].map((r) => [...r]);
+  const def = HAIR_STYLES.find((h) => h.id === style);
+  (def?.paint?.[facing] || []).forEach(([r, cols]) => cols.forEach((c) => { rows[r][c] = 'h'; }));
+  return rows.map((r) => r.join(''));
+}
 
 // the player's look evolves with their level
 const PLAYER_LOOKS = [
@@ -449,11 +539,11 @@ function glow(g, x, y, r, color, alpha = 1) {
   g.restore();
 }
 
-function drawPerson(g, x, y, dir, step, palKey) {
+function drawPerson(g, x, y, dir, step, palKey, style = 'short') {
   const facing = dir === 'left' || dir === 'right' ? 'side' : dir;
   const legs = LEGS[facing === 'side' ? 'side' : 'front'][step];
-  const rows = [...HEAD[facing], ...TORSO[facing], ...legs];
-  const img = sprite(`${palKey}-${facing}-${step}`, rows, PALETTES[palKey]);
+  const rows = [...headRows(facing, style), ...legs];
+  const img = sprite(`${palKey}-${style}-${facing}-${step}`, rows, PALETTES[palKey]);
   rect(g, 'rgba(0,0,0,0.25)', x + 3, y + 15, 10, 2);
   if (dir === 'left') {
     g.save();
@@ -466,7 +556,22 @@ function drawPerson(g, x, y, dir, step, palKey) {
   }
 }
 
-function drawPlayer(g, x, y, dir, step, li, t) {
+// palette for a player's avatar at a given look tier
+function avatarPalette(avatar, li) {
+  const key = `pl-${avatar.hair}-${avatar.skin}-${li}`;
+  if (!PALETTES[key]) {
+    PALETTES[key] = {
+      ...PLAYER_LOOKS[li].pal,
+      h: avatar.hair,
+      s: avatar.skin,
+      m: tint(avatar.skin, 0.85),
+      e: isDark(avatar.skin) ? '#f4f4f4' : '#1a1a2e',
+    };
+  }
+  return key;
+}
+
+function drawPlayer(g, x, y, dir, step, li, t, avatar = DEFAULT_AVATAR) {
   const look = PLAYER_LOOKS[li];
   if (look.aura) {
     g.globalAlpha = 0.3 + 0.15 * Math.sin(t / 300);
@@ -485,7 +590,7 @@ function drawPlayer(g, x, y, dir, step, li, t) {
       rect(g, '#b3202a', back, y + 8, 4, 9);
     }
   }
-  drawPerson(g, x, y, dir, step, `look${li}`);
+  drawPerson(g, x, y, dir, step, avatarPalette(avatar, li), avatar.style);
   if (look.cape && dir === 'up') {
     rect(g, INK, x + 2, y + 6, 12, 11);
     rect(g, '#b3202a', x + 3, y + 7, 10, 9);
@@ -1025,6 +1130,113 @@ function clearSave() {
   }
 }
 
+/* ---------- avatar + DA sheet sync ---------- */
+
+const AVATAR_KEY = 'questline-avatar';
+
+function loadAvatar() {
+  try {
+    const a = JSON.parse(localStorage.getItem(AVATAR_KEY));
+    return a && a.name ? { ...DEFAULT_AVATAR, ...a } : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeAvatar(avatar) {
+  try {
+    localStorage.setItem(AVATAR_KEY, JSON.stringify(avatar));
+  } catch (e) {
+    // storage unavailable: the avatar lives only in memory
+  }
+}
+
+// org/site from a {ref}--{site}--{org}.aem.page|live host
+function siteFromHost() {
+  const m = window.location.hostname.match(/^[^.]+?--([^.]+?)--([^.]+?)\.aem\.(page|live)$/);
+  return m ? { org: m[2], repo: m[1] } : null;
+}
+
+let daSession;
+/**
+ * Resolves to { token, org, repo } when the page runs as a DA app inside da.live
+ * (the shell hands over the signed-in user's Adobe token), otherwise to null.
+ */
+function getDaSession() {
+  if (daSession) return daSession;
+  daSession = (async () => {
+    if (window.self === window.top) return null;
+    try {
+      const sdk = await Promise.race([
+        // eslint-disable-next-line import/no-unresolved -- DA app SDK, served by da.live
+        import('https://da.live/nx/utils/sdk.js').then((m) => m.default),
+        new Promise((resolve) => { setTimeout(() => resolve(null), 4000); }),
+      ]);
+      if (!sdk?.token) return null;
+      const { context } = sdk;
+      const site = context?.org ? { org: context.org, repo: context.repo } : siteFromHost();
+      return site ? { token: sdk.token, ...site } : null;
+    } catch (e) {
+      return null;
+    }
+  })();
+  return daSession;
+}
+
+const DA_SOURCE = 'https://admin.da.live/source';
+
+/** Upserts the player's row (keyed by id) in the DA sheet at `sheetPath` (no extension). */
+async function saveToSheet(sheetPath, row) {
+  const session = await getDaSession();
+  if (!session) return 'local';
+  const url = `${DA_SOURCE}/${session.org}/${session.repo}${sheetPath}.json`;
+  const headers = { Authorization: `Bearer ${session.token}` };
+  try {
+    let json = { ':type': 'sheet', data: [] };
+    const resp = await fetch(url, { headers });
+    if (resp.ok) json = await resp.json();
+    // single sheet: { data: [...] }; multi sheet: { data: { data: [...] }, ':names': [...] }
+    const sheet = Array.isArray(json.data) ? json : (json.data || { data: [] });
+    const rows = (sheet.data || []).filter((r) => r.id !== row.id);
+    rows.push(row);
+    sheet.data = rows;
+    sheet.total = rows.length;
+    sheet.limit = rows.length;
+    sheet.offset = 0;
+    const body = new FormData();
+    body.append('data', new Blob([JSON.stringify(json)], { type: 'application/json' }));
+    const put = await fetch(url, { method: 'PUT', headers, body });
+    return put.ok ? 'synced' : 'error';
+  } catch (e) {
+    return 'error';
+  }
+}
+
+/** Loads the block rows of another page: same-origin .plain.html, else the DA source. */
+async function loadSourceRows(block) {
+  const path = block.dataset.source;
+  const pick = (html) => {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return doc.querySelector('.questline');
+  };
+  try {
+    const resp = await fetch(`${path}.plain.html`);
+    if (resp.ok) {
+      const found = pick(await resp.text());
+      if (found) return block.append(...found.children);
+    }
+  } catch (e) {
+    // fall through to DA
+  }
+  const session = await getDaSession();
+  if (!session) return null;
+  const resp = await fetch(`${DA_SOURCE}/${session.org}/${session.repo}${path}.html`, {
+    headers: { Authorization: `Bearer ${session.token}` },
+  });
+  const found = resp.ok ? pick(await resp.text()) : null;
+  return found ? block.append(...found.children) : null;
+}
+
 /* ---------- dialog ---------- */
 
 /** Thrown when the player closes a dialog with Esc; ends the current encounter. */
@@ -1099,7 +1311,8 @@ function createDialog(root, overlay) {
 
 /* ---------- game ---------- */
 
-export default function decorate(block) {
+export default async function decorate(block) {
+  if (block.dataset.source && !block.children.length) await loadSourceRows(block);
   const content = parseContent(block);
   const world = buildWorld();
   const numGates = Math.min(MAX_GATES, content.puzzles.length);
@@ -1181,6 +1394,10 @@ export default function decorate(block) {
   const particles = [];
 
   const save = () => writeSave(state);
+  let avatar = loadAvatar();
+  const contentPath = (block.dataset.source || window.location.pathname)
+    .replace(/\.html$/, '').replace(/\/$/, '/index');
+  const sheetPath = `${contentPath}-players`;
 
   /* DOM */
   const canvas = el('canvas', {
@@ -1260,6 +1477,7 @@ export default function decorate(block) {
 
   const storyBtn = el('button', { type: 'button', class: 'questline-tool', text: 'Story mode' });
   const resetBtn = el('button', { type: 'button', class: 'questline-tool', text: 'Restart' });
+  const avatarBtn = el('button', { type: 'button', class: 'questline-tool', text: 'Edit avatar' });
 
   block.replaceChildren(
     el(
@@ -1273,7 +1491,7 @@ export default function decorate(block) {
     screen,
     hintEl,
     pad,
-    el('div', { class: 'questline-toolbar' }, storyBtn, resetBtn),
+    el('div', { class: 'questline-toolbar' }, avatarBtn, storyBtn, resetBtn),
   );
 
   const dialog = createDialog(block, overlay);
@@ -1284,6 +1502,7 @@ export default function decorate(block) {
     const fill = el('span', { class: 'questline-xpfill' });
     fill.style.width = `${(into / XP_PER_LEVEL) * 100}%`;
     levelEl.replaceChildren(
+      ...(avatar ? [el('span', { class: 'questline-player', text: avatar.name })] : []),
       el('span', { class: 'questline-level', text: `Lv ${levelOf(state.xp)}` }),
       el('span', { class: 'questline-rank', text: PLAYER_LOOKS[lookIndex(levelOf(state.xp))].title }),
       el('span', { class: 'questline-xpbar' }, fill),
@@ -1388,6 +1607,32 @@ export default function decorate(block) {
     setTimeout(() => t.remove(), 2800);
   }
 
+  // one write at a time: each save reads the sheet, upserts this player's row, writes it back
+  let syncChain = Promise.resolve();
+  function syncAvatar({ quiet = false } = {}) {
+    if (!avatar) return syncChain;
+    syncChain = syncChain.then(async () => {
+      const level = levelOf(state.xp);
+      const nameOf = (list, value) => (list.find(([, v]) => v === value) || [value])[0];
+      const status = await saveToSheet(sheetPath, {
+        id: avatar.id,
+        name: avatar.name,
+        hairStyle: avatar.style,
+        hairColour: nameOf(HAIR_COLORS, avatar.hair),
+        skinTone: nameOf(SKIN_TONES, avatar.skin),
+        level: String(level),
+        title: PLAYER_LOOKS[lookIndex(level)].title,
+        xp: String(state.xp),
+        deals: `${state.deals.length}/${customers.length}`,
+        cleared: state.won ? 'yes' : 'no',
+        updated: new Date().toISOString(),
+      });
+      if (status === 'synced' && !quiet) toast('☁ Saved to the team sheet', 'skill');
+      if (status === 'error' && !quiet) toast('☁ Could not reach the team sheet', 'level');
+    });
+    return syncChain;
+  }
+
   function gain(amount, label) {
     if (amount <= 0) return;
     const before = levelOf(state.xp);
@@ -1398,6 +1643,7 @@ export default function decorate(block) {
       toast(`⬆ Level ${after}!`, 'level');
       const look = lookIndex(after);
       if (look !== lookIndex(before)) toast(`✨ New look: ${PLAYER_LOOKS[look].title}`, 'level');
+      syncAvatar({ quiet: true });
       burst(state.x, state.y, '#f4d35e', 30);
     }
     updateHud();
@@ -1409,6 +1655,155 @@ export default function decorate(block) {
     if (!state.missed.includes(id)) state.missed.push(id);
     save();
   };
+
+  /* avatar creator */
+  function editAvatar({ first = false } = {}) {
+    return new Promise((resolve, reject) => {
+      const draft = { ...DEFAULT_AVATAR, ...(avatar || {}) };
+      const preview = el('canvas', {
+        class: 'questline-creator-canvas', width: 18, height: 19, 'aria-hidden': 'true',
+      });
+      const pg = preview.getContext('2d');
+      const turn = ['down', 'right', 'up', 'left'];
+      let facingIdx = 0;
+      const paint = () => {
+        pg.clearRect(0, 0, 18, 19);
+        drawPlayer(pg, 1, 2, turn[facingIdx], 'stand', lookIndex(levelOf(state.xp)), performance.now(), draft);
+      };
+      const spin = setInterval(() => {
+        facingIdx = (facingIdx + 1) % turn.length;
+        paint();
+      }, 900);
+
+      const nameInput = el('input', {
+        type: 'text',
+        class: 'questline-creator-name',
+        maxlength: '24',
+        placeholder: 'Your name',
+        autocomplete: 'nickname',
+        'aria-label': 'Your name',
+        value: draft.name,
+      });
+      const startBtn = el('button', {
+        type: 'button', class: 'questline-choice primary', text: first ? 'Start quest ▸' : 'Save',
+      });
+
+      // a group of toggle buttons; `render` builds each option's content
+      const groups = [];
+      const group = (label, key, options, face) => {
+        const buttons = options.map(([value, name]) => {
+          const btn = el('button', {
+            type: 'button', class: 'questline-opt', 'aria-label': name, title: name,
+          }, face(value, name));
+          btn.addEventListener('click', () => {
+            draft[key] = value;
+            groups.forEach((fn) => fn());
+            paint();
+          });
+          return [value, btn];
+        });
+        groups.push(() => buttons.forEach(([value, btn]) => btn.setAttribute('aria-pressed', String(draft[key] === value))));
+        return el(
+          'div',
+          { class: 'questline-creator-group', role: 'group', 'aria-label': label },
+          el('span', { class: 'questline-creator-label', text: label }),
+          el('div', { class: 'questline-creator-options' }, buttons.map(([, b]) => b)),
+        );
+      };
+      const swatch = (color) => {
+        const dot = el('span', { class: 'questline-swatch' });
+        dot.style.background = color;
+        return dot;
+      };
+      const fields = [
+        group('Hair style', 'style', HAIR_STYLES.map((h) => [h.id, h.label]), (_, name) => name),
+        group('Hair colour', 'hair', HAIR_COLORS.map(([n, c]) => [c, n]), swatch),
+        group('Skin tone', 'skin', SKIN_TONES.map(([n, c]) => [c, n]), swatch),
+      ];
+      groups.forEach((fn) => fn());
+
+      const randomBtn = el('button', { type: 'button', class: 'questline-choice', text: '🎲 Surprise me' });
+      randomBtn.addEventListener('click', () => {
+        const pick = (list) => list[Math.floor(Math.random() * list.length)];
+        draft.style = pick(HAIR_STYLES).id;
+        [, draft.hair] = pick(HAIR_COLORS);
+        [, draft.skin] = pick(SKIN_TONES);
+        groups.forEach((fn) => fn());
+        paint();
+      });
+
+      const syncNote = el('p', { class: 'questline-note' });
+      getDaSession().then((session) => {
+        if (session) syncNote.textContent = '☁ Signed in with Adobe: your seller is saved to the team sheet.';
+        else syncNote.textContent = 'Saved on this device.';
+      });
+
+      const close = () => {
+        clearInterval(spin);
+        overlay.hidden = true;
+        overlay.replaceChildren();
+      };
+      const submit = () => {
+        const name = nameInput.value.trim();
+        if (!name) {
+          nameInput.focus();
+          nameInput.setAttribute('aria-invalid', 'true');
+          return;
+        }
+        draft.name = name;
+        if (!draft.id) draft.id = window.crypto?.randomUUID?.() || `p${Date.now()}${Math.random()}`;
+        avatar = draft;
+        writeAvatar(avatar);
+        close();
+        updateHud();
+        syncAvatar();
+        resolve(avatar);
+      };
+      startBtn.addEventListener('click', submit);
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submit();
+        }
+      });
+      nameInput.addEventListener('input', () => nameInput.removeAttribute('aria-invalid'));
+
+      const panel = el(
+        'div',
+        {
+          class: 'questline-panel questline-panel-intro questline-panel-creator', role: 'dialog', 'aria-label': 'Create your seller',
+        },
+        el('p', { class: 'questline-panel-title', text: first ? 'Create your seller' : 'Your seller' }),
+        el(
+          'div',
+          { class: 'questline-creator' },
+          el('div', { class: 'questline-creator-preview' }, preview),
+          el(
+            'div',
+            { class: 'questline-creator-fields' },
+            el('label', { class: 'questline-creator-group' }, el('span', { class: 'questline-creator-label', text: 'Name' }), nameInput),
+            fields,
+          ),
+        ),
+        syncNote,
+        el('div', { class: 'questline-choices' }, startBtn, randomBtn),
+      );
+      panel.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (first) return; // a new player must create their seller first
+        close();
+        reject(new DialogClosed());
+      });
+
+      overlay.replaceChildren(panel);
+      overlay.hidden = false;
+      paint();
+      nameInput.focus({ preventScroll: true });
+      if (window.innerWidth < 700) overlay.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
 
   /* encounters */
   const next = (label = 'Next ▸') => [{ label, value: true, primary: true }];
@@ -1520,6 +1915,7 @@ export default function decorate(block) {
     const best = playFor(c);
     if (ok) {
       state.deals.push(ci);
+      syncAvatar({ quiet: true });
       burst(c.house.x + 0.5, c.house.y + 1, '#3ddc84', 30);
       gain(reward(XP.deal, id), `deal won: ${c.company}`);
       await dialog.open({
@@ -1589,6 +1985,7 @@ export default function decorate(block) {
 
   async function victory() {
     state.won = true;
+    syncAvatar({ quiet: true });
     if (!state.finishedIn) state.finishedIn = Date.now() - (state.startedAt || Date.now());
     burst(world.boss.x + 0.5, world.boss.y + 0.5, '#f4d35e', 40);
     updateHud();
@@ -1618,7 +2015,7 @@ export default function decorate(block) {
       });
       again = choice === 'copy';
       if (again) {
-        const text = `Questline · ${content.title} cleared 🏅\n${levelLine}\n${summary}\n${grid}\n${window.location.href}`;
+        const text = `Questline · ${avatar?.name || 'A seller'} cleared ${content.title} 🏅\n${levelLine}\n${summary}\n${grid}\n${window.location.href}`;
         try {
           await navigator.clipboard.writeText(text);
         } catch (e) {
@@ -1755,11 +2152,12 @@ export default function decorate(block) {
   }
 
   async function intro() {
+    if (!avatar) await editAvatar({ first: true });
     const hasProgress = saved && (saved.talked?.length || saved.solved?.length || saved.won);
     const choice = await dialog.open({
       tone: 'intro',
       title: content.title,
-      lines: [content.intro],
+      lines: [`Welcome, ${avatar.name}!`, content.intro],
       note: 'Move: arrow keys / WASD or the on-screen pad · Interact: Space, Enter or A · Esc closes a conversation',
       choices: [
         { label: hasProgress ? 'Continue quest' : 'Start quest', value: 'play', primary: true },
@@ -1770,6 +2168,7 @@ export default function decorate(block) {
     if (choice === 'story') await storyMode();
   }
 
+  avatarBtn.addEventListener('click', () => run(() => editAvatar()));
   storyBtn.addEventListener('click', () => run(async () => { begin(); await storyMode(); }));
   resetBtn.addEventListener('click', () => run(async () => {
     const yes = await dialog.open({
@@ -1990,7 +2389,8 @@ export default function decorate(block) {
         y: n.y * TILE,
         draw: () => {
           const bob = Math.floor(t / 600 + i) % 2;
-          drawPerson(g, n.x * TILE, n.y * TILE - bob, 'down', 'stand', n.pal);
+          const hair = NPC_HAIR[i % NPC_HAIR.length];
+          drawPerson(g, n.x * TILE, n.y * TILE - bob, 'down', 'stand', n.pal, hair);
           if (unlearned(i).length) bang(n.x * TILE + 5, n.y * TILE - 11, i, '#2f6fd6');
           else if (!state.talked.includes(i)) bang(n.x * TILE + 5, n.y * TILE - 11, i);
         },
@@ -1999,7 +2399,8 @@ export default function decorate(block) {
         y: py,
         draw: () => {
           const li = lookIndex(levelOf(state.xp));
-          drawPlayer(g, Math.round(px), Math.round(py), state.dir, step, li, t);
+          const look = avatar || DEFAULT_AVATAR;
+          drawPlayer(g, Math.round(px), Math.round(py), state.dir, step, li, t, look);
         },
       },
     ];
