@@ -724,3 +724,88 @@
   border-radius: 50%;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 35%);
 }
+
+/* ARR goal */
+.questline .questline-arrbox {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.questline .questline-arrlabel {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--ql-good);
+  color: var(--ql-night);
+  font-weight: 700;
+}
+
+.questline .questline-arrbar {
+  position: relative;
+  width: 90px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--ql-night-2);
+}
+
+.questline .questline-arrfill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #2bb673, #3ddc84);
+  transition: width 0.5s ease-out;
+}
+
+.questline .questline-arrtext {
+  color: var(--ql-good);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.questline .questline-toast-arr {
+  background: var(--ql-good);
+  color: var(--ql-night);
+  font-weight: 700;
+}
+
+.questline .questline-toast-loss {
+  background: var(--ql-bad);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* ARR price tag under each customer's sign */
+.questline .questline-sign-arr {
+  position: absolute;
+  top: -1.9cqw;
+  left: 50%;
+  padding: 0.15cqw 0.6cqw;
+  border-radius: 0.5cqw;
+  background: #1b7a45;
+  color: #fff;
+  font-family: var(--ql-pixel-font);
+  font-size: 1.35cqw;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.questline .questline-sign-arr.lowered {
+  background: var(--ql-bad);
+}
+
+.questline .questline-sign.won .questline-sign-arr {
+  background: var(--ql-gold);
+  color: var(--ql-night);
+}
+
+.questline .questline-sign.won:has(.questline-sign-arr)::after {
+  display: none;
+}
+
+/* reference letters waiting to be shared */
+.questline .questline-chip-letter {
+  border-color: #f4a261;
+  color: #ffd7b0;
+}
