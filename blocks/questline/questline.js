@@ -1061,20 +1061,15 @@ function drawTerrainTile(g, grid, tx, ty) {
   }
 }
 
-function buildTerrain(grid) {
-  const cols = grid[0].length;
+// the terrain of columns x0..x1-1 (one screen), drawn once into an offscreen canvas
+function buildTerrain(grid, x0 = 0, x1 = COLS) {
   const c = document.createElement('canvas');
-  c.width = cols * TILE;
+  c.width = (x1 - x0) * TILE;
   c.height = ROWS * TILE;
   const g = c.getContext('2d');
+  g.translate(-x0 * TILE, 0);
   for (let y = 0; y < ROWS; y += 1) {
-    for (let x = 0; x < cols; x += 1) drawTerrainTile(g, grid, x, y);
-  }
-  // walls cast a shadow to the east
-  for (let y = 0; y < ROWS; y += 1) {
-    for (let x = 0; x < cols - 1; x += 1) {
-      if (grid[y][x] === '^' && grid[y][x + 1] !== '^') rect(g, 'rgba(0,0,0,0.18)', (x + 1) * TILE, y * TILE, 3, TILE);
-    }
+    for (let x = x0; x < x1; x += 1) drawTerrainTile(g, grid, x, y);
   }
   return c;
 }
@@ -1966,6 +1961,19 @@ export default async function decorate(block) {
   const particles = [];
 
   const save = () => writeSave(state);
+
+  // each screen's terrain is drawn the first time it is shown (behind the travel fade),
+  // so loading the page only pays for one screen
+  const terrains = new Map();
+  function terrainFor(key) {
+    if (!terrains.has(key)) {
+      terrains.set(key, key === 'south'
+        ? buildTerrain(south.grid)
+        : buildTerrain(world.grid, key * COLS, (key + 1) * COLS));
+    }
+    return terrains.get(key);
+  }
+  const currentTerrain = () => terrainFor(state.area === 'south' ? 'south' : screenOf(state.x));
   let avatar = loadAvatar();
   const contentPath = (block.dataset.source || window.location.pathname)
     .replace(/\.html$/, '').replace(/\/$/, '/index');
@@ -3301,6 +3309,7 @@ export default async function decorate(block) {
       motion.ty = state.y;
       save();
       applyArea();
+      currentTerrain(); // draw the new screen while the stage is still faded out
       stage.classList.remove('questline-fading');
       busy = false;
       toast(state.area === 'south' ? '📍 Adobe' : `📍 ${SCREEN_TITLES[screenOf(state.x)]}`, 'skill');
@@ -3456,10 +3465,8 @@ export default async function decorate(block) {
     updatePlate(!busy && state.area === 'realm');
   }
 
-  let terrain = null;
   let shades = null;
   let cloud = null;
-  let southTerrain = null;
   let southShade = null;
   // a light layer per screen: soft vignette, plus a tint (a sunset over the bay)
   function makeShade(paint) {
@@ -3480,8 +3487,6 @@ export default async function decorate(block) {
     sg.fillRect(0, 0, W, H);
   };
   function buildOverlays() {
-    terrain = buildTerrain(world.grid);
-    southTerrain = buildTerrain(south.grid);
     // golden-hour light over Adobe
     southShade = makeShade((sg) => {
       const sun = sg.createRadialGradient(W * 0.85, -20, 10, W * 0.85, -20, W * 0.9);
@@ -3549,7 +3554,7 @@ export default async function decorate(block) {
   }
 
   function renderSouth(t) {
-    g.drawImage(southTerrain, 0, 0);
+    g.drawImage(terrainFor('south'), 0, 0);
     drawAnimatedTiles(g, south.grid, t);
     drawLibrary(g, south.library.x * TILE, south.library.y * TILE, t);
     const at = (p) => [p.x * TILE, p.y * TILE];
@@ -3575,7 +3580,7 @@ export default async function decorate(block) {
   }
 
   function render(t) {
-    if (!terrain) buildOverlays();
+    if (!shades) buildOverlays();
     if (state.area === 'south') {
       renderSouth(t);
       return;
@@ -3584,7 +3589,7 @@ export default async function decorate(block) {
     const ox = scr * W;
     g.save();
     g.translate(-ox, 0);
-    g.drawImage(terrain, ox, 0, W, H, ox, 0, W, H);
+    g.drawImage(terrainFor(scr), ox, 0);
     drawAnimatedTiles(g, world.grid, t, scr * COLS, (scr + 1) * COLS);
     const bang = (x, y, phase, color = '#e63946', bg = '#fff') => {
       const by = y + Math.round(Math.sin(t / 250 + phase) * 1.5);
