@@ -57,8 +57,8 @@ const TILE = 16;
 const COLS = 24;
 const ROWS = 16;
 // the realm is four screens side by side; each rune gate opens the way east
-const SCREEN_TITLES = ['Village', 'Whispering Grove', 'Island Lake', 'Whale Bay'];
-const WCOLS = COLS * SCREEN_TITLES.length;
+const SCREENS = 4; // village, grove, lake, bay
+const WCOLS = COLS * SCREENS;
 const screenOf = (x) => Math.floor(x / COLS);
 const SPEED = 6; // tiles per second
 const XP_PER_LEVEL = 50;
@@ -93,7 +93,7 @@ const KEYMAP = {
 const ACTION_KEYS = ['Space', 'Enter', 'KeyE'];
 
 const DEFAULT_CONTENT = {
-  title: 'The Readiness Realm',
+  title: 'The quest for FY27',
   intro: 'Add NPC, Puzzle and Objection rows to this block to turn your collateral into a quest.',
   bossName: 'The Incumbent',
   whale: {
@@ -108,6 +108,67 @@ const DEFAULT_CONTENT = {
   }],
   shrine: null,
 };
+
+/*
+ * Texts of people, houses and places. Each one can be overridden in the DA sheet
+ * "<content path>-texts" (columns: key | text | where), e.g. /drafts/questline-texts.
+ * {placeholders} are filled in by the game; the sheet's "where" column lists them.
+ */
+const TEXTS = {
+  'screen.village': 'Village',
+  'screen.grove': 'Whispering Grove',
+  'screen.lake': 'Island Lake',
+  'screen.bay': 'Whale Bay',
+  'expert.role': '★ Expert for {expertise}',
+  'expert.done': 'Got it',
+  'play.title': '📘 New play: {play}',
+  'play.done': 'Learned it',
+  'customer.welcome': 'Welcome to {company}. How can you help us?',
+  'customer.ask': 'So… what would you suggest?',
+  'customer.needs': 'To advise {company} you need {skills}:',
+  'customer.missing': 'Still missing {missing}. Experts teach these skills.',
+  'customer.missing.done': 'I’ll be back',
+  'customer.again': 'Good to see you again! The {play} is off to a great start.',
+  'customer.again.done': 'See you',
+  'pitch.speaker': 'Your strategy',
+  'pitch.ask': 'Which play fits {company}?',
+  'pitch.value': '💰 On the table: {arr} ARR',
+  'deal.title': '🤝 Deal won: {company}',
+  'deal.yes': '{who}: “That is exactly what we need. Let’s do it.”',
+  'deal.letter': '📜 {name} hands you a reference letter. Share it with a prospect who has a similar problem.',
+  'deal.expansion': 'Side quest: {company} may want more later. Look for the blue + on their door.',
+  'pitch.wrong.title': 'Not convinced',
+  'pitch.wrong': '{who}: “I don’t see how that solves our problem.”',
+  'reference.title': '📜 Share a customer story first?',
+  'reference.ask': 'Which story would convince {company}?',
+  'reference.wrong': '{who}: “Interesting, but that’s not really our situation.”',
+  'reference.landed.title': '📜 The story lands',
+  'reference.landed': '{who}: “If it worked for {from}, it can work for us.”',
+  'expansion.title': '📈 Expansion: {arr} ARR',
+  'expansion.won.title': '📈 Expansion won: {company}',
+  'expansion.won': '{who}: “Perfect. Let’s add it to the contract.”',
+  'expansion.weak.title': 'Not quite',
+  'expansion.weak': '{who}: “Hmm, I’m not sure that works for us.”',
+  'gate.name': 'Rune Gate {n}',
+  'gate.intro': 'The runes glow. Answer {questions} to pass.',
+  'gate.open.title': 'Rune Gate {n} opens!',
+  'gate.open': 'The stone slides aside.',
+  'shrine.name': 'Shrine of Insight',
+  'shrine.text': 'The crystal shows you the key collateral.',
+  'whale.notyet': '“We only buy from vendors our peers trust. Win every account in the realm, then we talk.”',
+  'whale.intro': '“We run everything on {incumbent}. Why would we move?”',
+  'whale.pitch': 'Make your pitch',
+  'whale.hit.title': 'Objection handled!',
+  'whale.hit': '{whale} nods slowly. {left} left.',
+  'whale.miss.title': 'Not convinced',
+  'whale.miss': '{whale} frowns. Better response: {answer}',
+  'whale.signed': '“Best decision we made all year. See you at the QBR!”',
+  'signpost.realm': 'Experts, customers, the rune gates and, far to the east, the whale.',
+  'signpost.adobe': 'The Field readiness library and the top 10 board.',
+  'fountain.coin': '🪙 Plink! The coin sinks and glitters.',
+  'fountain.wishes': 'May every pitch land on the first try.\nMay your pipeline overflow like this fountain.\nMay procurement sign before quarter end.\nMay the demo gods smile on you.',
+};
+const SCREEN_KEYS = ['village', 'grove', 'lake', 'bay'];
 
 /* ---------- small helpers ---------- */
 
@@ -354,7 +415,7 @@ function buildWorld() {
   // every screen is fenced by trees; the rune gates on the east edges are the only way on
   for (let x = 0; x < WCOLS; x += 1) { set(x, 0, 'T'); set(x, ROWS - 1, 'T'); }
   for (let y = 0; y < ROWS; y += 1) set(0, y, 'T');
-  for (let s = 1; s < SCREEN_TITLES.length; s += 1) {
+  for (let s = 1; s < SCREENS; s += 1) {
     for (let y = 0; y < ROWS; y += 1) { set(s * COLS - 1, y, 'T'); set(s * COLS, y, 'T'); }
   }
 
@@ -1640,6 +1701,25 @@ function clearSave() {
   }
 }
 
+/* ---------- texts sheet ---------- */
+
+/** Reads the texts sheet (key | text) into { key: text }; empty rows keep the default. */
+async function loadTexts(sheetPath) {
+  try {
+    const resp = await fetch(`${sheetPath}.json`);
+    if (!resp.ok) return {};
+    const json = await resp.json();
+    const rows = Array.isArray(json.data) ? json.data : (json.texts?.data || json.data?.data || []);
+    const pairs = rows.map((row) => {
+      const cells = Object.fromEntries(Object.entries(row).map(([k, v]) => [k.toLowerCase(), v]));
+      return [String(cells.key || '').trim(), String(cells.text ?? '')];
+    });
+    return Object.fromEntries(pairs.filter(([k, v]) => k && v.trim()));
+  } catch (e) {
+    return {};
+  }
+}
+
 /* ---------- avatar + DA sheet sync ---------- */
 
 const AVATAR_KEY = 'questline-avatar';
@@ -1822,8 +1902,16 @@ function createDialog(root, overlay) {
 /* ---------- game ---------- */
 
 export default async function decorate(block) {
+  const contentPath = (block.dataset.source || window.location.pathname)
+    .replace(/\.html$/, '').replace(/\/$/, '/index');
+  const textsLoad = loadTexts(`${contentPath}-texts`);
   if (block.dataset.source && !block.children.length) await loadSourceRows(block);
   const content = parseContent(block);
+  const custom = await textsLoad;
+  const T = (key, vars = {}) => (custom[key] || TEXTS[key] || key)
+    .replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  const plural = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
+  const screenTitle = (i) => T(`screen.${SCREEN_KEYS[i]}`);
   const world = buildWorld();
   const south = buildSouth();
   const numGates = Math.min(MAX_GATES, content.puzzles.length);
@@ -1975,8 +2063,6 @@ export default async function decorate(block) {
   }
   const currentTerrain = () => terrainFor(state.area === 'south' ? 'south' : screenOf(state.x));
   let avatar = loadAvatar();
-  const contentPath = (block.dataset.source || window.location.pathname)
-    .replace(/\.html$/, '').replace(/\/$/, '/index');
   const sheetPath = `${contentPath}-players`;
 
   /* DOM */
@@ -2044,7 +2130,7 @@ export default async function decorate(block) {
     8,
   );
   // one label layer per realm screen
-  const screenLabels = SCREEN_TITLES.map(() => el('div', { class: 'questline-signs', hidden: true }));
+  const screenLabels = SCREEN_KEYS.map(() => el('div', { class: 'questline-signs', hidden: true }));
   signs.forEach((sign, i) => screenLabels[screenOf(customers[i].house.x)].append(sign));
   screenLabels[0].append(postLabel('Adobe ▼', world.signpost));
   const gateLabels = world.gates.map((gt) => {
@@ -2054,7 +2140,7 @@ export default async function decorate(block) {
   });
   // the way back west, over the gap in the trees
   screenLabels.slice(1).forEach((layer, i) => layer.append(place(
-    el('div', { class: 'questline-post questline-post-gate', text: `◀ ${SCREEN_TITLES[i]}` }),
+    el('div', { class: 'questline-post questline-post-gate', text: `◀ ${screenTitle(i)}` }),
     (i + 1) * COLS * TILE + 2,
     8 * TILE - 13,
     56,
@@ -2098,7 +2184,7 @@ export default async function decorate(block) {
     const s = screenOf(state.x);
     screenLabels.forEach((layer, i) => { layer.hidden = inSouth || i !== s; });
     southLabels.hidden = !inSouth;
-    canvas.setAttribute('aria-label', inSouth ? 'Adobe: library and leaderboard' : `${content.title}: ${SCREEN_TITLES[s]}`);
+    canvas.setAttribute('aria-label', inSouth ? 'Adobe: library and leaderboard' : `${content.title}: ${screenTitle(s)}`);
   }
 
   // expert nameplate: shown above the nearest expert when the player walks close
@@ -2207,7 +2293,7 @@ export default async function decorate(block) {
     gateEl.textContent = `Gates ${state.gates.slice(0, numGates).filter(Boolean).length}/${numGates}`;
     signs.forEach((s, i) => s.classList.toggle('won', state.deals.includes(i)));
     gateLabels.forEach((label, i) => {
-      label.textContent = state.gates[i] ? `${SCREEN_TITLES[i + 1]} ▶` : `Rune Gate ${i + 1}`;
+      label.textContent = state.gates[i] ? `${screenTitle(i + 1)} ▶` : T('gate.name', { n: i + 1 });
     });
     whaleArrEl.textContent = state.won && state.whaleArr
       ? `✓ ${money(state.whaleArr)} ARR`
@@ -2221,8 +2307,8 @@ export default async function decorate(block) {
       objective = 'Objective: a customer is ready for your pitch. Knock on a door with a gold !';
     } else if (state.deals.length < customers.length) {
       objective = 'Objective: learn the skills customers need (🔒 doors). Experts with ! teach them';
-    } else if (nextGate >= 0) objective = `Objective: open Rune Gate ${nextGate + 1}`;
-    else objective = `Objective: land the whale, ${whale.name} (${money(whaleValue())} ARR), in ${SCREEN_TITLES[3]}`;
+    } else if (nextGate >= 0) objective = `Objective: open ${T('gate.name', { n: nextGate + 1 })}`;
+    else objective = `Objective: land the whale, ${whale.name} (${money(whaleValue())} ARR), in ${screenTitle(3)}`;
     const side = [];
     const openExp = customers.filter((_, ci) => expansionOpen(ci)).length;
     if (openExp) side.push(`${openExp} expansion${openExp === 1 ? '' : 's'} (blue +)`);
@@ -2280,8 +2366,8 @@ export default async function decorate(block) {
       return { type: 'customer', index: ci, label };
     }
     const gi = gateAt(x, y);
-    if (gi >= 0 && !state.gates[gi]) return { type: 'gate', index: gi, label: `read Rune Gate ${gi + 1}` };
-    if (isShrine(x, y)) return { type: 'shrine', label: 'touch the Shrine of Insight' };
+    if (gi >= 0 && !state.gates[gi]) return { type: 'gate', index: gi, label: `read ${T('gate.name', { n: gi + 1 })}` };
+    if (isShrine(x, y)) return { type: 'shrine', label: `touch the ${T('shrine.name')}` };
     if (isWhale(x, y)) {
       return state.whaleArr
         ? { type: 'whale', label: `wave at ${whale.name}` }
@@ -2533,7 +2619,7 @@ export default async function decorate(block) {
     const npc = npcs[i];
     const lines = npc.lines.length ? npc.lines : ['…'];
     const first = !state.talked.includes(i);
-    const role = npc.expertise ? `★ Expert for ${npc.expertise}` : null;
+    const role = npc.expertise ? T('expert.role', { expertise: npc.expertise }) : null;
     let note = null;
     if (first) note = npc.expertise ? `★ New skill: ${npc.expertise} · +${XP.meet} XP` : `+${XP.meet} XP`;
     for (let k = 0; k < lines.length; k += 1) {
@@ -2544,7 +2630,7 @@ export default async function decorate(block) {
         lines: [lines[k]],
         link: last ? npc.link : null,
         note: last ? note : null,
-        choices: next(last ? 'Got it' : 'Next ▸'),
+        choices: next(last ? T('expert.done') : 'Next ▸'),
       });
     }
     if (first) {
@@ -2560,11 +2646,11 @@ export default async function decorate(block) {
         tone: 'play',
         speaker: npc.name,
         role,
-        title: `📘 New play: ${play.name}`,
+        title: T('play.title', { play: play.name }),
         lines: [play.description],
         link: play.link,
         note: `+${XP.play} XP · Playbook ${state.plays.length + 1}/${plays.length}`,
-        choices: next('Learned it'),
+        choices: next(T('play.done')),
       });
       state.plays.push(teach[k]);
       burst(npc.x, npc.y, '#8ecae6', 14);
@@ -2580,9 +2666,9 @@ export default async function decorate(block) {
     const c = customers[ci];
     const who = c.contact || c.company;
     const pick = await dialog.open({
-      speaker: 'Your strategy',
-      title: '📜 Share a customer story first?',
-      lines: [`Which story would convince ${c.company}?`],
+      speaker: T('pitch.speaker'),
+      title: T('reference.title'),
+      lines: [T('reference.ask', { company: c.company })],
       choices: [
         ...letters.map((ri) => ({
           label: `${customers[references[ri].from].company}: ${references[ri].story[0] || 'reference letter'}`,
@@ -2597,7 +2683,7 @@ export default async function decorate(block) {
     if (ref.to !== ci) {
       await dialog.open({
         speaker: c.contact ? `${c.contact} · ${c.company}` : c.company,
-        lines: [`${who}: “Interesting, but that’s not really our situation.”`],
+        lines: [T('reference.wrong', { who, company: c.company })],
         note: 'No harm done. Keep the letter for a prospect with a similar problem.',
         choices: next('Continue'),
       });
@@ -2612,10 +2698,10 @@ export default async function decorate(block) {
     gain(XP.reference, `reference for ${c.company}`);
     await dialog.open({
       tone: 'good',
-      title: '📜 The story lands',
+      title: T('reference.landed.title'),
       lines: [
         ...ref.story.map((line) => `“${line}”`),
-        `${who}: “If it worked for ${customers[ref.from].company}, it can work for us.”`,
+        T('reference.landed', { who, company: c.company, from: customers[ref.from].company }),
       ],
       note: `This deal is now worth ${money(dealValue(ci))} (lost ARR restored, +15%).`,
       link: ref.link,
@@ -2634,7 +2720,7 @@ export default async function decorate(block) {
     const ok = await dialog.open({
       tone: 'play',
       speaker: c.contact ? `${c.contact} · ${c.company}` : c.company,
-      title: `📈 Expansion: ${money(value)} ARR`,
+      title: T('expansion.title', { arr: money(value), company: c.company }),
       lines: [ex.prompt],
       note: misses
         ? `Down from ${money(ex.arr)} after ${misses} weak answer${misses === 1 ? '' : 's'}.`
@@ -2653,8 +2739,8 @@ export default async function decorate(block) {
       syncAvatar({ quiet: true });
       await dialog.open({
         tone: 'good',
-        title: `📈 Expansion won: ${c.company}`,
-        lines: [`${who}: “Perfect. Let’s add it to the contract.”`, `💰 ${money(arrClosed())} of ${money(arrGoal)} goal`],
+        title: T('expansion.won.title', { company: c.company }),
+        lines: [T('expansion.won', { who, company: c.company }), `💰 ${money(arrClosed())} of ${money(arrGoal)} goal`],
         choices: next('Onward'),
       });
       return true;
@@ -2667,8 +2753,8 @@ export default async function decorate(block) {
     if (lost) toast(`📉 −${money(lost)} ARR`, 'loss');
     await dialog.open({
       tone: 'bad',
-      title: 'Not quite',
-      lines: [`${who}: “Hmm, I’m not sure that works for us.”`, `Better answer: ${ex.answer}`],
+      title: T('expansion.weak.title'),
+      lines: [T('expansion.weak', { who, company: c.company }), `Better answer: ${ex.answer}`],
       note: `This expansion is now worth ${money(expansionValue(ci))}. Come back to try again.`,
       link: ex.link || c.link,
       choices: next('Continue'),
@@ -2685,12 +2771,12 @@ export default async function decorate(block) {
       if (expansionOpen(ci)) return pitchExpansion(ci);
       await dialog.open({
         speaker,
-        lines: [`Good to see you again! The ${c.best || 'project'} is off to a great start.`],
-        choices: next('See you'),
+        lines: [T('customer.again', { who, company: c.company, play: c.best || 'project' })],
+        choices: next(T('customer.again.done')),
       });
       return true;
     }
-    const lines = c.situation.length ? c.situation : [`Welcome to ${c.company}. How can you help us?`];
+    const lines = c.situation.length ? c.situation : [T('customer.welcome', { who, company: c.company })];
     for (let k = 0; k < lines.length; k += 1) {
       await dialog.open({ speaker, lines: [lines[k]], choices: next() });
     }
@@ -2705,12 +2791,12 @@ export default async function decorate(block) {
       await dialog.open({
         speaker,
         lines: [
-          'So… what would you suggest?',
-          `To advise ${c.company} you need ${c.needs.length} skill${c.needs.length === 1 ? '' : 's'}:`,
+          T('customer.ask', { who, company: c.company }),
+          T('customer.needs', { company: c.company, skills: plural(c.needs.length, 'skill') }),
           ...c.needs.map((s) => `${hasSkill(s.name) ? '✅' : '🔒'} ${icon(s)} ${s.name}`),
         ],
-        note: `Still missing ${missing.length}. Experts teach these skills.`,
-        choices: next('I’ll be back'),
+        note: T('customer.missing', { missing: missing.length }),
+        choices: next(T('customer.missing.done')),
       });
       return false;
     }
@@ -2721,8 +2807,8 @@ export default async function decorate(block) {
     const value = dealValue(ci);
     const misses = state.pitchMisses[ci] || 0;
     const pick = await dialog.open({
-      speaker: 'Your strategy',
-      lines: [`Which play fits ${c.company}?`, `💰 On the table: ${money(value)} ARR`],
+      speaker: T('pitch.speaker'),
+      lines: [T('pitch.ask', { company: c.company }), T('pitch.value', { arr: money(value) })],
       note: misses
         ? `Down from ${money(c.arr)} after ${misses} failed pitch${misses === 1 ? '' : 'es'}.`
         : `A wrong pitch costs 25% of this deal.${state.refBoost[ci] ? ' Includes +15% from your reference.' : ''}`,
@@ -2744,13 +2830,13 @@ export default async function decorate(block) {
       gain(reward(XP.deal, id), `deal won: ${c.company}`);
       await dialog.open({
         tone: 'good',
-        title: `🤝 Deal won: ${c.company}`,
+        title: T('deal.title', { company: c.company }),
         lines: [
-          `${who}: “That is exactly what we need. Let’s do it.”`,
+          T('deal.yes', { who, company: c.company }),
           `💰 ${money(value)} ARR closed · ${money(arrClosed())} of ${money(arrGoal)} goal`,
-          earned.length ? `📜 ${c.contact ? c.contact.split(',')[0] : c.company} hands you a reference letter. Share it with a prospect who has a similar problem.` : '',
+          earned.length ? T('deal.letter', { name: c.contact ? c.contact.split(',')[0] : c.company, company: c.company }) : '',
         ],
-        note: expansions[ci] ? `Side quest: ${c.company} may want more later. Look for the blue + on their door.` : null,
+        note: expansions[ci] ? T('deal.expansion', { company: c.company }) : null,
         choices: next('Onward'),
       });
       if (earned.length) toast(`📜 Reference letter: ${c.company}`, 'skill');
@@ -2765,9 +2851,9 @@ export default async function decorate(block) {
     if (lost) toast(`📉 −${money(lost)} ARR`, 'loss');
     await dialog.open({
       tone: 'bad',
-      title: 'Not convinced',
+      title: T('pitch.wrong.title'),
       lines: [
-        `${who}: “I don’t see how that solves our problem.”`,
+        T('pitch.wrong', { who, company: c.company }),
         `Better fit: ${c.best}${best?.description ? `. ${best.description}` : ''}`,
       ],
       note: lost
@@ -2783,8 +2869,8 @@ export default async function decorate(block) {
     const pending = gateQuestions[gi].filter((idx) => !state.solved.includes(idx));
     if (!skipIntro) {
       const go = await dialog.open({
-        speaker: `Rune Gate ${gi + 1}`,
-        lines: [`The runes glow. Answer ${pending.length} question${pending.length === 1 ? '' : 's'} to pass.`],
+        speaker: T('gate.name', { n: gi + 1 }),
+        lines: [T('gate.intro', { questions: plural(pending.length, 'question') })],
         choices: [{ label: 'Begin', value: true, primary: true }, { label: 'Not yet', value: false }],
       });
       if (!go) return false;
@@ -2792,7 +2878,7 @@ export default async function decorate(block) {
     for (let k = 0; k < pending.length; k += 1) {
       const q = content.puzzles[pending[k]];
       const id = `g${pending[k]}`;
-      const ok = await ask(q, `Rune Gate ${gi + 1}`);
+      const ok = await ask(q, T('gate.name', { n: gi + 1 }));
       if (!ok) {
         miss(id);
         await dialog.open({
@@ -2816,7 +2902,7 @@ export default async function decorate(block) {
     updateHud();
     save();
     await dialog.open({
-      tone: 'good', title: `Rune Gate ${gi + 1} opens!`, lines: ['The stone slides aside.'], choices: next('Onward'),
+      tone: 'good', title: T('gate.open.title', { n: gi + 1 }), lines: [T('gate.open')], choices: next('Onward'),
     });
     return true;
   }
@@ -2875,7 +2961,7 @@ export default async function decorate(block) {
       await dialog.open({
         tone: 'good',
         speaker: whaleSpeaker(),
-        lines: ['“Best decision we made all year. See you at the QBR!”', `💰 ${money(state.whaleArr)} ARR signed`],
+        lines: [T('whale.signed', { whale: whale.name }), `💰 ${money(state.whaleArr)} ARR signed`],
         link: whale.link,
         choices: next('🐋 Wave'),
       });
@@ -2886,7 +2972,7 @@ export default async function decorate(block) {
         tone: 'boss',
         speaker: whaleSpeaker(),
         lines: [
-          '“We only buy from vendors our peers trust. Win every account in the realm, then we talk.”',
+          T('whale.notyet', { whale: whale.name, incumbent: content.bossName }),
           `${money(whaleValue())} ARR is on the table.`,
         ],
         note: `Deals won: ${state.deals.length}/${customers.length}`,
@@ -2899,11 +2985,11 @@ export default async function decorate(block) {
         tone: 'boss',
         speaker: whaleSpeaker(),
         lines: [
-          `“We run everything on ${content.bossName}. Why would we move?”`,
+          T('whale.intro', { whale: whale.name, incumbent: content.bossName }),
           `🐋 ${money(whaleValue())} ARR on the table. Counter ${maxHp} objection${maxHp === 1 ? '' : 's'} to land the deal; every miss trims ${WHALE_PENALTY * 100}% off it.`,
         ],
         link: whale.link,
-        choices: [{ label: 'Make your pitch', value: true, primary: true }, { label: 'Not yet', value: false }],
+        choices: [{ label: T('whale.pitch'), value: true, primary: true }, { label: 'Not yet', value: false }],
       });
       if (!go) return false;
     }
@@ -2922,7 +3008,7 @@ export default async function decorate(block) {
         gain(reward(XP.objection, id), 'objection countered');
         if (state.bossHp > 0) {
           await dialog.open({
-            tone: 'good', title: 'Objection handled!', lines: [`${whale.name} nods slowly. ${state.bossHp} objection${state.bossHp === 1 ? '' : 's'} left.`], choices: next('Keep going'),
+            tone: 'good', title: T('whale.hit.title'), lines: [T('whale.hit', { whale: whale.name, left: plural(state.bossHp, 'objection') })], choices: next('Keep going'),
           });
         }
       } else {
@@ -2933,8 +3019,8 @@ export default async function decorate(block) {
         queue = [...queue.slice(1), idx];
         const goOn = await dialog.open({
           tone: 'bad',
-          title: 'Not convinced',
-          lines: [`${whale.name} frowns. Better response: ${q.answer}`],
+          title: T('whale.miss.title'),
+          lines: [T('whale.miss', { whale: whale.name, answer: q.answer })],
           note: `The deal is now worth ${money(whaleValue())}. The objection will come back.`,
           link: q.link,
           choices: story ? next('Continue') : [
@@ -2957,8 +3043,8 @@ export default async function decorate(block) {
     burst(world.shrine.x, world.shrine.y, '#5ee7ff', 16);
     if (first) gain(XP.shrine, 'studied at the shrine');
     await dialog.open({
-      speaker: 'Shrine of Insight',
-      lines: [content.shrine?.text || 'The crystal shows you the key collateral.'],
+      speaker: T('shrine.name'),
+      lines: [content.shrine?.text || T('shrine.text')],
       note: first ? `+${XP.shrine} XP` : 'You have already studied here.',
       link: content.shrine?.link,
       choices: next('Thanks'),
@@ -3012,7 +3098,7 @@ export default async function decorate(block) {
     content.puzzles.forEach((q) => addLink(q.link, 'Rune gate'));
     content.objections.forEach((q) => addLink(q.link, 'Objection'));
     content.expansions.forEach((e) => addLink(e.link, `Expansion · ${e.customer}`));
-    if (content.shrine) addLink(content.shrine.link, 'Shrine of Insight');
+    if (content.shrine) addLink(content.shrine.link, T('shrine.name'));
     const study = (list) => list.map((q) => ({
       title: q.prompt, answer: q.answer, link: q.link,
     }));
@@ -3184,23 +3270,18 @@ export default async function decorate(block) {
     await dialog.open({
       speaker: 'Signpost',
       lines: inSouth
-        ? [`▲ ${content.title}`, 'Experts, customers, the rune gates and, far to the east, the whale.']
-        : ['▼ Adobe', 'The Field readiness library and the top 10 board.'],
+        ? [`▲ ${content.title}`, T('signpost.realm')]
+        : ['▼ Adobe', T('signpost.adobe')],
       choices: next('OK'),
     });
   }
 
-  const WISHES = [
-    'May every pitch land on the first try.',
-    'May your pipeline overflow like this fountain.',
-    'May procurement sign before quarter end.',
-    'May the demo gods smile on you.',
-  ];
   async function tossCoin() {
+    const wishes = T('fountain.wishes').split('\n').map((w) => w.trim()).filter(Boolean);
     burst(south.fountain.x + 1, south.fountain.y + 1, '#f4d35e', 14);
     await dialog.open({
       speaker: 'Fountain',
-      lines: ['🪙 Plink! The coin sinks and glitters.', WISHES[Math.floor(Math.random() * WISHES.length)]],
+      lines: [T('fountain.coin'), wishes[Math.floor(Math.random() * wishes.length)]],
       choices: next('Make a wish ✨'),
     });
   }
@@ -3272,7 +3353,7 @@ export default async function decorate(block) {
       tone: 'intro',
       title: content.title,
       lines: [`Welcome, ${avatar.name}!`, content.intro],
-      note: 'Move: arrow keys / WASD or the on-screen pad · Interact: Space, Enter or A · Esc closes a conversation',
+      note: 'Move: arrow keys / WASD or the on-screen pad · Interact: walk into someone, or Space, Enter or A · Esc closes a conversation',
       choices: [
         { label: hasProgress ? 'Continue quest' : 'Start quest', value: 'play', primary: true },
         { label: 'Story mode (no walking)', value: 'story' },
@@ -3312,11 +3393,12 @@ export default async function decorate(block) {
       currentTerrain(); // draw the new screen while the stage is still faded out
       stage.classList.remove('questline-fading');
       busy = false;
-      toast(state.area === 'south' ? '📍 Adobe' : `📍 ${SCREEN_TITLES[screenOf(state.x)]}`, 'skill');
+      toast(state.area === 'south' ? '📍 Adobe' : `📍 ${screenTitle(screenOf(state.x))}`, 'skill');
     }, 220);
   }
 
-  function tryStep(dir) {
+  // bump: a fresh arrow press into a person, door, gate or sign interacts with it
+  function tryStep(dir, bump = false) {
     if (motion.moving || busy) return;
     state.dir = dir;
     const [dx, dy] = DIRS[dir];
@@ -3342,7 +3424,7 @@ export default async function decorate(block) {
       motion.tx = state.x + dx;
       motion.ty = state.y + dy;
       motion.prog = 0;
-    }
+    } else if (bump && facing()) interact();
   }
 
   let actionArmed = false;
@@ -3363,7 +3445,7 @@ export default async function decorate(block) {
       e.preventDefault();
       if (!busy) {
         press(dir);
-        tryStep(dir); // a quick tap still moves one tile
+        tryStep(dir, !e.repeat); // a quick tap still moves one tile
       }
     } else if (ACTION_KEYS.includes(e.code)) {
       e.preventDefault();
@@ -3390,7 +3472,7 @@ export default async function decorate(block) {
       btn.setPointerCapture(e.pointerId);
       if (!busy) {
         press(dir);
-        tryStep(dir);
+        tryStep(dir, true);
       }
     });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, () => release(dir)));
