@@ -1,0 +1,366 @@
+.questline {
+  --ql-ink: #f8f5e9;
+  --ql-night: #1b1f3a;
+  --ql-night-2: #272c52;
+  --ql-gold: #f4d35e;
+  --ql-good: #3ddc84;
+  --ql-bad: #ff5d6c;
+  --ql-boss: #b388ff;
+  --ql-pixel-font: ui-monospace, 'SFMono-Regular', menlo, consolas, monospace;
+
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--ql-night);
+  color: var(--ql-ink);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
+}
+
+.questline p {
+  margin: 0;
+}
+
+/* HUD */
+.questline .questline-hud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 8px;
+  font-family: var(--ql-pixel-font);
+  font-size: 14px;
+}
+
+.questline .questline-title {
+  color: var(--ql-gold);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.questline .questline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: center;
+}
+
+.questline .questline-conf {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.questline .questline-label {
+  margin-right: 4px;
+}
+
+.questline .questline-pip {
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg) scale(0.8);
+  border: 2px solid var(--ql-gold);
+  background: transparent;
+}
+
+.questline .questline-pip.full {
+  background: var(--ql-gold);
+}
+
+.questline .questline-objective {
+  padding: 0 4px 8px;
+  font-size: 14px;
+  opacity: 0.85;
+}
+
+/* screen */
+.questline .questline-screen {
+  position: relative;
+}
+
+.questline .questline-stage {
+  border-radius: 6px;
+  outline: none;
+  overflow: hidden;
+  line-height: 0;
+  box-shadow: 0 0 0 3px var(--ql-night-2);
+}
+
+.questline .questline-stage:focus-visible {
+  box-shadow: 0 0 0 3px var(--ql-gold);
+}
+
+.questline .questline-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.questline.questline-story .questline-stage {
+  filter: grayscale(0.6) brightness(0.6);
+}
+
+.questline .questline-hint {
+  min-height: 1.6em;
+  padding: 8px 4px 0;
+  font-family: var(--ql-pixel-font);
+  font-size: 14px;
+  color: var(--ql-gold);
+}
+
+/* dialog */
+.questline .questline-overlay {
+  margin-top: 10px;
+}
+
+.questline .questline-overlay[hidden] {
+  display: none;
+}
+
+.questline .questline-panel {
+  padding: 16px 18px;
+  border: 3px solid var(--ql-gold);
+  border-radius: 8px;
+  background: rgb(20 22 45 / 96%);
+  font-size: 17px;
+  line-height: 1.5;
+  animation: questline-pop 0.15s ease-out;
+}
+
+.questline .questline-panel-good {
+  border-color: var(--ql-good);
+}
+
+.questline .questline-panel-bad {
+  border-color: var(--ql-bad);
+}
+
+.questline .questline-panel-boss {
+  border-color: var(--ql-boss);
+}
+
+.questline .questline-speaker {
+  margin-bottom: 6px;
+  font-family: var(--ql-pixel-font);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ql-gold);
+}
+
+.questline .questline-panel-boss .questline-speaker {
+  color: var(--ql-boss);
+}
+
+.questline .questline-panel-title {
+  margin-bottom: 6px;
+  font-family: var(--ql-pixel-font);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.questline .questline-panel-good .questline-panel-title {
+  color: var(--ql-good);
+}
+
+.questline .questline-panel-bad .questline-panel-title {
+  color: var(--ql-bad);
+}
+
+.questline .questline-panel-intro .questline-panel-title {
+  font-size: 22px;
+  color: var(--ql-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.questline .questline-text + .questline-text {
+  margin-top: 6px;
+}
+
+.questline .questline-note {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--ql-gold);
+}
+
+.questline .questline-learn {
+  margin-top: 8px;
+  font-size: 15px;
+}
+
+.questline .questline-learn a {
+  color: #8ecae6;
+}
+
+.questline .questline-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.questline .questline-choices-stacked {
+  flex-direction: column;
+}
+
+.questline .questline-choice {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  padding: 9px 14px;
+  border: 2px solid var(--ql-night-2);
+  border-radius: 6px;
+  background: var(--ql-night-2);
+  color: var(--ql-ink);
+  font: inherit;
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.questline .questline-choice:hover,
+.questline .questline-choice:focus-visible {
+  border-color: var(--ql-gold);
+  outline: none;
+}
+
+.questline .questline-choice.primary {
+  background: var(--ql-gold);
+  border-color: var(--ql-gold);
+  color: var(--ql-night);
+  font-weight: 700;
+}
+
+.questline .questline-choice.primary:focus-visible {
+  box-shadow: 0 0 0 3px var(--ql-ink);
+}
+
+.questline .questline-key {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--ql-night);
+  color: var(--ql-gold);
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+}
+
+/* touch pad */
+.questline .questline-pad {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 4px;
+  user-select: none;
+}
+
+.questline .questline-dpad {
+  display: grid;
+  grid-template: repeat(3, 48px) / repeat(3, 48px);
+}
+
+.questline .questline-pad button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--ql-night-2);
+  color: var(--ql-ink);
+  font-size: 18px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.questline .questline-pad button:active {
+  background: var(--ql-gold);
+  color: var(--ql-night);
+}
+
+.questline .questline-pad-up { grid-area: 1 / 2; border-radius: 8px 8px 0 0; }
+.questline .questline-pad-left { grid-area: 2 / 1; border-radius: 8px 0 0 8px; }
+.questline .questline-pad-right { grid-area: 2 / 3; border-radius: 0 8px 8px 0; }
+.questline .questline-pad-down { grid-area: 3 / 2; border-radius: 0 0 8px 8px; }
+
+.questline .questline-pad .questline-pad-a {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--ql-gold);
+  color: var(--ql-night);
+  font-family: var(--ql-pixel-font);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+/* toolbar */
+.questline .questline-toolbar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+
+.questline .questline-tool {
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--ql-night-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ql-ink);
+  font-family: var(--ql-pixel-font);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.questline .questline-tool:hover {
+  border-color: var(--ql-gold);
+}
+
+@keyframes questline-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .questline .questline-panel {
+    animation: none;
+  }
+}
+
+/* wide screens: dialog floats over the map, pad hidden for mouse/keyboard users */
+@media (width >= 700px) {
+  .questline {
+    padding: 16px;
+  }
+
+  .questline .questline-overlay {
+    position: absolute;
+    inset: auto 12px 12px;
+    max-height: calc(100% - 24px);
+    margin: 0;
+    overflow: auto;
+  }
+
+  .questline .questline-overlay:has(.questline-panel-intro) {
+    inset: 50% 15% auto;
+    transform: translateY(-50%);
+  }
+}
+
+@media (width >= 700px) and (pointer: fine) {
+  .questline .questline-pad {
+    display: none;
+  }
+}
