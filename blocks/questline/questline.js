@@ -12,7 +12,13 @@
  *   Puzzle    | <question> | <correct answer> | <wrong answer> | ... | <link>
  *   Objection | <objection> | <best response> | <weak response> | ... | <link>
  *   Shrine    | <text> | <link>
+ *   Play      | <play name> | <what it is / when to use it> | <taught by: NPC name> | <link>
+ *   Customer  | <company> | <logo image> | <contact, e.g. "Priya, VP Digital"> | <situation>
+ *             | <best play name> | <link>
  * Puzzles are spread across up to three rune gates; objections make up the boss fight.
+ * Each customer lives in one of the village houses (max 3). To propose a strategy the
+ * player must first learn every play from the advisors (NPCs); all deals must be won
+ * before the boss accepts the challenge.
  * Any cell that only contains a link is treated as the "learn more" link.
  */
 
@@ -100,7 +106,15 @@ function cellLines(cell) {
 
 function parseContent(block) {
   const content = {
-    title: '', intro: '', bossName: '', npcs: [], puzzles: [], objections: [], shrine: null,
+    title: '',
+    intro: '',
+    bossName: '',
+    npcs: [],
+    puzzles: [],
+    objections: [],
+    shrine: null,
+    plays: [],
+    customers: [],
   };
   [...block.children].forEach((row) => {
     const cells = [...row.children];
@@ -111,8 +125,34 @@ function parseContent(block) {
     const link = linkEl ? { href: linkEl.href, text: cellText(linkEl) } : null;
     const textCells = rest.filter((c) => !isLinkOnly(c) && cellText(c));
     const texts = textCells.map(cellText);
+    // positional cells (empty cells kept) for row types with a fixed column order
+    // (an empty 2nd cell is an empty logo slot on customer rows, so it is skipped too)
+    const posCells = rest.filter((c, idx) => !isLinkOnly(c) && !c.querySelector('img')
+      && !(key === 'customer' && idx === 1 && !cellText(c)));
+    const pos = posCells.map(cellText);
+    const img = row.querySelector('img');
 
     switch (key) {
+      case 'play':
+        if (pos[0]) {
+          content.plays.push({
+            name: pos[0], description: pos[1] || '', teacher: pos[2] || '', link,
+          });
+        }
+        break;
+      case 'customer':
+      case 'account':
+        if (pos[0]) {
+          content.customers.push({
+            company: pos[0],
+            contact: pos[1] || '',
+            situation: posCells[2] ? cellLines(posCells[2]) : [],
+            best: pos[3] || '',
+            logo: img ? { src: img.currentSrc || img.src, alt: img.alt } : null,
+            link,
+          });
+        }
+        break;
       case 'title':
         content.title = texts[0] || '';
         break;
@@ -159,6 +199,8 @@ function parseContent(block) {
     puzzles: content.puzzles.length ? content.puzzles : DEFAULT_CONTENT.puzzles,
     objections: content.objections.length ? content.objections : DEFAULT_CONTENT.objections,
     shrine: content.shrine,
+    plays: content.plays,
+    customers: content.customers,
   };
 }
 
@@ -607,6 +649,19 @@ export default function decorate(block) {
     ...npc, ...world.npcSpots[i], pal: `npc${i % 5}`,
   }));
   const maxHp = content.objections.length;
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  // each play is taught by the advisor named in "taught by", otherwise round-robin
+  const plays = content.plays.map((p, i) => {
+    let teacher = p.teacher
+      ? npcs.findIndex((n) => n.name.toLowerCase().includes(p.teacher.toLowerCase()))
+      : -1;
+    if (teacher < 0 && npcs.length) teacher = i % npcs.length;
+    return { ...p, teacher };
+  });
+  const customers = content.customers.slice(0, world.houses.length).map((c, i) => ({
+    ...c, house: world.houses[i],
+  }));
+  const playFor = (c) => plays.find((p) => c.best && same(p.name, c.best));
 
   /* state */
   const fresh = () => ({
@@ -614,6 +669,8 @@ export default function decorate(block) {
     y: world.start.y,
     dir: 'right',
     talked: [],
+    plays: [],
+    deals: [],
     solved: [],
     gates: Array.from({ length: MAX_GATES }, (_, i) => i >= numGates),
     maxConf: START_CONFIDENCE,
@@ -627,6 +684,9 @@ export default function decorate(block) {
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
   if (!Array.isArray(state.gates) || state.gates.length !== MAX_GATES) state.gates = fresh().gates;
+  const unlearned = (ni) => plays
+    .map((p, pi) => pi)
+    .filter((pi) => plays[pi].teacher === ni && !state.plays.includes(pi));
   const motion = {
     moving: false, tx: state.x, ty: state.y, prog: 0,
   };
@@ -646,12 +706,37 @@ export default function decorate(block) {
 
   const confEl = el('span', { class: 'questline-conf' });
   const insightEl = el('span', { class: 'questline-stat' });
+  const dealEl = el('span', { class: 'questline-stat' });
   const gateEl = el('span', { class: 'questline-stat' });
   const objectiveEl = el('p', { class: 'questline-objective' });
   const hintEl = el('p', { class: 'questline-hint', 'aria-live': 'polite' });
   const overlay = el('div', { class: 'questline-overlay', hidden: true });
   const stage = el('div', { class: 'questline-stage', tabindex: '0', 'aria-label': 'Game. Use arrow keys or WASD to move, Space to interact.' }, canvas);
   const screen = el('div', { class: 'questline-screen' }, stage, overlay);
+
+  // customer logo signs, positioned over the house roofs (HTML keeps logos crisp)
+  const pct = (v, total) => `${(v / total) * 100}%`;
+  const initials = (name) => name.split(/\s+/).map((w) => w[0]).join('')
+    .slice(0, 3)
+    .toUpperCase();
+  const signs = customers.map((c) => {
+    const sign = el(
+      'div',
+      { class: 'questline-sign' },
+      c.logo
+        ? el('img', { src: c.logo.src, alt: c.logo.alt || c.company })
+        : el('span', { text: initials(c.company) }),
+    );
+    Object.assign(sign.style, {
+      left: pct(c.house.x * TILE + 3, COLS * TILE),
+      top: pct(c.house.y * TILE + 1, ROWS * TILE),
+      width: pct(26, COLS * TILE),
+      height: pct(11, ROWS * TILE),
+    });
+    sign.title = c.company;
+    return sign;
+  });
+  if (signs.length) stage.append(el('div', { class: 'questline-signs' }, signs));
 
   const padBtn = (dir, label) => el('button', {
     type: 'button', class: `questline-pad-${dir}`, 'aria-label': `Move ${dir}`, 'data-dir': dir, text: label,
@@ -672,7 +757,7 @@ export default function decorate(block) {
       'div',
       { class: 'questline-hud' },
       el('p', { class: 'questline-title', text: content.title }),
-      el('div', { class: 'questline-stats' }, confEl, insightEl, gateEl),
+      el('div', { class: 'questline-stats' }, confEl, insightEl, customers.length ? dealEl : null, gateEl),
     ),
     objectiveEl,
     screen,
@@ -690,12 +775,18 @@ export default function decorate(block) {
       ...Array.from({ length: state.maxConf }, (_, i) => el('span', { class: `questline-pip${i < state.conf ? ' full' : ''}` })),
     );
     confEl.setAttribute('aria-label', `Confidence ${state.conf} of ${state.maxConf}`);
-    insightEl.textContent = `Insights ${state.talked.length}/${npcs.length}`;
+    insightEl.textContent = plays.length
+      ? `Plays ${state.plays.length}/${plays.length}`
+      : `Insights ${state.talked.length}/${npcs.length}`;
+    dealEl.textContent = `Deals ${state.deals.length}/${customers.length}`;
     gateEl.textContent = `Gates ${state.gates.slice(0, numGates).filter(Boolean).length}/${numGates}`;
+    signs.forEach((s, i) => s.classList.toggle('won', state.deals.includes(i)));
     const nextGate = state.gates.findIndex((open) => !open);
     let objective;
     if (state.won) objective = `🏅 ${content.title} cleared. Replay any time.`;
-    else if (nextGate >= 0) objective = `Objective: open Rune Gate ${nextGate + 1}${state.talked.length < npcs.length ? ' (villagers with ! share insights)' : ''}`;
+    else if (state.plays.length < plays.length) objective = 'Objective: learn the plays. Advisors with ! teach them';
+    else if (state.deals.length < customers.length) objective = 'Objective: knock on customer doors and propose the right play';
+    else if (nextGate >= 0) objective = `Objective: open Rune Gate ${nextGate + 1}`;
     else objective = `Objective: defeat ${content.bossName}`;
     objectiveEl.textContent = objective;
   }
@@ -706,6 +797,9 @@ export default function decorate(block) {
   const isBoss = (x, y) => state.bossHp > 0
     && x >= world.boss.x && x <= world.boss.x + 1 && y >= world.boss.y && y <= world.boss.y + 1;
   const isShrine = (x, y) => x === world.shrine.x && y === world.shrine.y;
+  const customerAt = (x, y) => customers.findIndex(
+    (c) => y === c.house.y + 1 && (x === c.house.x || x === c.house.x + 1),
+  );
 
   function walkable(x, y) {
     if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
@@ -721,6 +815,8 @@ export default function decorate(block) {
     const y = state.y + dy;
     const n = npcAt(x, y);
     if (n >= 0) return { type: 'npc', index: n, label: `talk to ${npcs[n].name}` };
+    const ci = customerAt(x, y);
+    if (ci >= 0) return { type: 'customer', index: ci, label: `knock on ${customers[ci].company}'s door` };
     const gi = gateAt(x, y);
     if (gi >= 0 && !state.gates[gi]) return { type: 'gate', index: gi, label: `read Rune Gate ${gi + 1}` };
     if (isShrine(x, y)) return { type: 'shrine', label: 'touch the Shrine of Insight' };
@@ -800,6 +896,91 @@ export default function decorate(block) {
       updateHud();
       save();
     }
+    const teach = unlearned(i);
+    for (let k = 0; k < teach.length; k += 1) {
+      const play = plays[teach[k]];
+      await dialog.open({
+        tone: 'play',
+        speaker: npc.name,
+        title: `📘 New play: ${play.name}`,
+        lines: [play.description],
+        link: play.link,
+        note: `Plays learned: ${state.plays.length + 1}/${plays.length}`,
+        choices: next('Learned it'),
+      });
+      state.plays.push(teach[k]);
+      burst(npc.x, npc.y, '#8ecae6', 14);
+      updateHud();
+      save();
+    }
+  }
+
+  async function visitCustomer(ci) {
+    const c = customers[ci];
+    const who = c.contact || c.company;
+    const speaker = c.contact ? `${c.contact} · ${c.company}` : c.company;
+    if (state.deals.includes(ci)) {
+      await dialog.open({
+        speaker,
+        lines: [`Good to see you again! The ${c.best || 'project'} is off to a great start.`],
+        choices: next('See you'),
+      });
+      return true;
+    }
+    const lines = c.situation.length ? c.situation : [`Welcome to ${c.company}. How can you help us?`];
+    for (let k = 0; k < lines.length; k += 1) {
+      await dialog.open({ speaker, lines: [lines[k]], choices: next() });
+    }
+    if (!c.best) return true;
+    if (state.plays.length < plays.length) {
+      await dialog.open({
+        speaker,
+        lines: ['So… what would you suggest?'],
+        note: `You know ${state.plays.length} of ${plays.length} plays. Talk to the advisors (!) to learn them all before proposing a strategy.`,
+        choices: next('I’ll be back'),
+      });
+      return false;
+    }
+
+    const options = plays.map((p) => ({ label: p.name, value: p.name, numbered: true }));
+    if (!playFor(c)) options.push({ label: c.best, value: c.best, numbered: true });
+    const pick = await dialog.open({
+      speaker: 'Your strategy',
+      lines: [`Which play fits ${c.company}?`],
+      choices: shuffle(options),
+    });
+    const ok = same(pick, c.best);
+    state.history.push(ok);
+    const best = playFor(c);
+    if (ok) {
+      state.deals.push(ci);
+      burst(c.house.x + 0.5, c.house.y + 1, '#3ddc84', 30);
+      updateHud();
+      save();
+      await dialog.open({
+        tone: 'good',
+        title: `🤝 Deal won: ${c.company}`,
+        lines: [`${who}: “That is exactly what we need. Let’s do it.”`],
+        choices: next('Onward'),
+      });
+      return true;
+    }
+    state.conf = Math.max(0, state.conf - 1);
+    updateHud();
+    save();
+    await dialog.open({
+      tone: 'bad',
+      title: 'Not convinced',
+      lines: [
+        `${who}: “I don’t see how that solves our problem.”`,
+        `Better fit: ${c.best}${best?.description ? `. ${best.description}` : ''}`,
+        '−1 confidence',
+      ],
+      link: best?.link || c.link,
+      choices: next('Continue'),
+    });
+    if (state.conf <= 0) await defeat();
+    return false;
   }
 
   async function challengeGate(gi, { skipIntro = false } = {}) {
@@ -859,7 +1040,13 @@ export default function decorate(block) {
       const choice = await dialog.open({
         tone: 'good',
         title: `🏅 ${content.title} cleared!`,
-        lines: [`${content.bossName} has been defeated.`, summary, `Insights collected: ${state.talked.length}/${npcs.length}`],
+        lines: [
+          `${content.bossName} has been defeated.`,
+          summary,
+          customers.length
+            ? `Deals won: ${state.deals.length}/${customers.length} · Plays mastered: ${state.plays.length}/${plays.length}`
+            : `Insights collected: ${state.talked.length}/${npcs.length}`,
+        ],
         choices: [
           { label: 'Copy result', value: 'copy', primary: true },
           { label: 'Keep exploring', value: 'close' },
@@ -879,6 +1066,16 @@ export default function decorate(block) {
   }
 
   async function fightBoss({ skipIntro = false } = {}) {
+    if (state.deals.length < customers.length) {
+      await dialog.open({
+        tone: 'boss',
+        speaker: content.bossName,
+        lines: ['“Ha! You haven’t even won the village accounts. Come back when customers trust you.”'],
+        note: `Deals won: ${state.deals.length}/${customers.length}`,
+        choices: next('Retreat'),
+      });
+      return false;
+    }
     if (!skipIntro) {
       const go = await dialog.open({
         tone: 'boss',
@@ -953,6 +1150,7 @@ export default function decorate(block) {
     const target = facing();
     if (!target) return;
     if (target.type === 'npc') run(() => talkTo(target.index));
+    else if (target.type === 'customer') run(() => visitCustomer(target.index));
     else if (target.type === 'gate') run(() => challengeGate(target.index));
     else if (target.type === 'shrine') run(visitShrine);
     else if (target.type === 'boss') run(() => fightBoss());
@@ -962,7 +1160,10 @@ export default function decorate(block) {
     block.classList.add('questline-story');
     try {
       for (let i = 0; i < npcs.length; i += 1) {
-        if (!state.talked.includes(i)) await talkTo(i);
+        if (!state.talked.includes(i) || unlearned(i).length) await talkTo(i);
+      }
+      for (let ci = 0; ci < customers.length; ci += 1) {
+        while (!state.deals.includes(ci)) await visitCustomer(ci);
       }
       for (let gi = 0; gi < numGates; gi += 1) {
         while (!state.gates[gi]) await challengeGate(gi, { skipIntro: true });
@@ -1108,7 +1309,24 @@ export default function decorate(block) {
     for (let y = 0; y < ROWS; y += 1) {
       for (let x = 0; x < COLS; x += 1) drawTile(g, world.grid[y][x], x, y, t);
     }
+    const bang = (x, y, phase, color = '#e63946') => {
+      const by = y + Math.round(Math.sin(t / 250 + phase) * 1.5);
+      rect(g, '#fff', x, by, 6, 8);
+      rect(g, color, x + 2, by + 1, 2, 4);
+      rect(g, color, x + 2, by + 6, 2, 1);
+    };
+
     world.houses.forEach((h) => drawHouse(g, h.x, h.y));
+    customers.forEach((c, i) => {
+      const x = c.house.x * TILE;
+      const y = c.house.y * TILE;
+      if (state.deals.includes(i)) {
+        rect(g, '#3ddc84', x + 13, y + 20, 6, 11); // won: green door
+        rect(g, '#1b7a45', x + 15, y + 22, 2, 7);
+      } else {
+        bang(x + 13, y + 12, i + 2);
+      }
+    });
     world.gates.forEach((gt, i) => drawGate(g, gt, i, state.gates[i], t));
     drawShrine(g, world.shrine, t);
 
@@ -1123,12 +1341,8 @@ export default function decorate(block) {
         draw: () => {
           const bob = Math.floor(t / 600 + i) % 2;
           drawPerson(g, n.x * TILE, n.y * TILE - bob, 'down', 'stand', n.pal);
-          if (!state.talked.includes(i)) {
-            const by = n.y * TILE - 10 + Math.round(Math.sin(t / 250 + i) * 1.5);
-            rect(g, '#fff', n.x * TILE + 5, by, 6, 8);
-            rect(g, '#e63946', n.x * TILE + 7, by + 1, 2, 4);
-            rect(g, '#e63946', n.x * TILE + 7, by + 6, 2, 1);
-          }
+          if (unlearned(i).length) bang(n.x * TILE + 5, n.y * TILE - 10, i, '#2f6fd6');
+          else if (!state.talked.includes(i)) bang(n.x * TILE + 5, n.y * TILE - 10, i);
         },
       })),
       { y: py, draw: () => drawPerson(g, px, py, state.dir, step, 'player') },

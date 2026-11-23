@@ -81,6 +81,8 @@
 }
 
 .questline .questline-stage {
+  position: relative;
+  container-type: inline-size;
   border-radius: 6px;
   outline: none;
   overflow: hidden;
@@ -99,6 +101,61 @@
   aspect-ratio: 3 / 2;
   image-rendering: pixelated;
   touch-action: none;
+}
+
+/* customer logo signs over the house roofs */
+.questline .questline-signs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.questline .questline-sign {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  padding: 0.25cqw;
+  border: 0.3cqw solid #3b2a1a;
+  border-radius: 0.5cqw;
+  background: #fffdf5;
+  box-shadow: 0 0.3cqw 0 rgb(0 0 0 / 35%);
+  line-height: 1;
+}
+
+.questline .questline-sign img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
+}
+
+.questline .questline-sign span {
+  font-family: var(--ql-pixel-font);
+  font-size: 1.9cqw;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--ql-night);
+}
+
+.questline .questline-sign.won {
+  border-color: #1b7a45;
+}
+
+.questline .questline-sign.won::after {
+  content: '✓';
+  position: absolute;
+  top: -1.1cqw;
+  right: -1.1cqw;
+  display: grid;
+  place-items: center;
+  width: 2.4cqw;
+  height: 2.4cqw;
+  border-radius: 50%;
+  background: var(--ql-good);
+  color: var(--ql-night);
+  font-size: 1.6cqw;
+  font-weight: 700;
 }
 
 .questline.questline-story .questline-stage {
@@ -171,6 +228,14 @@
 
 .questline .questline-panel-bad .questline-panel-title {
   color: var(--ql-bad);
+}
+
+.questline .questline-panel-play {
+  border-color: #8ecae6;
+}
+
+.questline .questline-panel-play .questline-panel-title {
+  color: #8ecae6;
 }
 
 .questline .questline-panel-intro .questline-panel-title {
