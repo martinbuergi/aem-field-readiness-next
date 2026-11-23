@@ -7,7 +7,10 @@
  * Authoring (one row per entry, first cell is the row type, case-insensitive):
  *   Title     | <region name>
  *   Intro     | <text shown on the start screen>
- *   Boss      | <boss name>
+ *   Whale     | <company> | <contact, e.g. "Dana, CIO"> | <ARR, e.g. "$5M"> | <link>
+ *             The whale account waiting in the bay at the end of the realm (default $5M ARR).
+ *             Each objection the player fails to counter trims 10% off the deal (floor 50%).
+ *   Boss      | <the vendor the whale uses today, e.g. "The Incumbent">
  *   Expert    | <name> | <expertise, e.g. "Adobe Brand Visibility"> | <dialogue> | <link>
  *   NPC       | <name> | <dialogue, one paragraph per line> | <link to collateral>
  *   Puzzle    | <question> | <correct answer> | <wrong answer> | ... | <link>
@@ -31,12 +34,15 @@
  *             Extra collateral shown in the Field readiness library (south of the realm).
  *             The library also lists every expert, play, customer, rune gate question and
  *             objection with its link, so players can study everything in one place.
- * South of the village a road leads to Adobe: the library and a top-10 leaderboard.
- * Puzzles are spread across up to three rune gates; objections make up the boss fight.
- * Each customer lives in a house: three in the village, two in the grove behind Rune Gate 1
- * and two on the lake islands behind Rune Gate 2 (max 7). To propose a strategy the
- * player needs the skills that customer requires; all deals must be won before the
- * boss accepts the challenge. The player starts at level 0 and earns XP for every
+ * The realm is four screens side by side, each rune gate leading to the next one east:
+ * the village, the grove (Rune Gate 1), the lake (Rune Gate 2) and the bay (Rune Gate 3),
+ * where the whale account waits. South of the village a road leads to Adobe: the library
+ * and a top-10 leaderboard.
+ * Puzzles are spread across up to three rune gates; objections make up the whale pitch.
+ * Each customer lives in a house: three in the village, two in the grove and two on the
+ * lake islands (max 7). To propose a strategy the player needs the skills that customer
+ * requires; all deals must be won before the whale takes the meeting.
+ * The player starts at level 0 and earns XP for every
  * conversation and correct answer; expertise areas and plays become skills.
  * Any cell that only contains a link is treated as the "learn more" link.
  *
@@ -50,6 +56,10 @@
 const TILE = 16;
 const COLS = 24;
 const ROWS = 16;
+// the realm is four screens side by side; each rune gate opens the way east
+const SCREEN_TITLES = ['Village', 'Whispering Grove', 'Island Lake', 'Whale Bay'];
+const WCOLS = COLS * SCREEN_TITLES.length;
+const screenOf = (x) => Math.floor(x / COLS);
 const SPEED = 6; // tiles per second
 const XP_PER_LEVEL = 50;
 const XP = {
@@ -86,7 +96,10 @@ const DEFAULT_CONTENT = {
   title: 'The Readiness Realm',
   intro: 'Add NPC, Puzzle and Objection rows to this block to turn your collateral into a quest.',
   bossName: 'The Incumbent',
-  npcs: [{ name: 'Guide', lines: ['Talk to villagers, open the rune gates, then face the boss.'], link: null }],
+  whale: {
+    name: 'Leviathan Global', contact: '', arr: 5000000, link: null,
+  },
+  npcs: [{ name: 'Guide', lines: ['Talk to villagers, open the rune gates, then land the whale.'], link: null }],
   puzzles: [{
     prompt: 'What opens a rune gate?', answer: 'Knowing the content', wrong: ['A sword', 'Luck'], link: null,
   }],
@@ -161,6 +174,7 @@ function parseContent(block) {
     title: '',
     intro: '',
     bossName: '',
+    whale: null,
     npcs: [],
     puzzles: [],
     objections: [],
@@ -233,6 +247,17 @@ function parseContent(block) {
       case 'boss':
         content.bossName = texts[0] || '';
         break;
+      case 'whale': {
+        const parts = [...texts];
+        const arrAt = parts.findIndex((t) => MONEY.test(t));
+        const arr = arrAt >= 0 ? parseMoney(parts.splice(arrAt, 1)[0]) : 0;
+        if (parts[0]) {
+          content.whale = {
+            name: parts[0], contact: parts[1] || '', arr, link,
+          };
+        }
+        break;
+      }
       case 'npc':
       case 'character':
         if (texts.length) {
@@ -298,6 +323,12 @@ function parseContent(block) {
     title: content.title || DEFAULT_CONTENT.title,
     intro: content.intro || DEFAULT_CONTENT.intro,
     bossName: content.bossName || DEFAULT_CONTENT.bossName,
+    whale: {
+      name: content.whale?.name || DEFAULT_CONTENT.whale.name,
+      contact: content.whale?.contact || '',
+      arr: content.whale?.arr || DEFAULT_CONTENT.whale.arr,
+      link: content.whale?.link || null,
+    },
     npcs: content.npcs.length ? content.npcs : DEFAULT_CONTENT.npcs,
     puzzles: content.puzzles.length ? content.puzzles : DEFAULT_CONTENT.puzzles,
     objections: content.objections.length ? content.objections : DEFAULT_CONTENT.objections,
@@ -313,53 +344,89 @@ function parseContent(block) {
 /* ---------- world ---------- */
 
 function buildWorld() {
-  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
+  const grid = Array.from({ length: ROWS }, () => Array(WCOLS).fill('.'));
   const set = (x, y, c) => { grid[y][x] = c; };
+  const fill = (x0, y0, x1, y1, c) => {
+    for (let y = y0; y <= y1; y += 1) for (let x = x0; x <= x1; x += 1) set(x, y, c);
+  };
+  const dot = (c, list) => list.forEach(([x, y]) => set(x, y, c));
 
-  // zone walls: village | grove | lake | arena
-  [9, 14, 18].forEach((x) => { for (let y = 1; y < ROWS - 1; y += 1) set(x, y, '^'); });
+  // every screen is fenced by trees; the rune gates on the east edges are the only way on
+  for (let x = 0; x < WCOLS; x += 1) { set(x, 0, 'T'); set(x, ROWS - 1, 'T'); }
+  for (let y = 0; y < ROWS; y += 1) set(0, y, 'T');
+  for (let s = 1; s < SCREEN_TITLES.length; s += 1) {
+    for (let y = 0; y < ROWS; y += 1) { set(s * COLS - 1, y, 'T'); set(s * COLS, y, 'T'); }
+  }
 
-  // village paths and decoration
-  for (let x = 1; x < 9; x += 1) set(x, 8, ':');
-  for (let y = 4; y < ROWS - 1; y += 1) set(4, y, ':');
+  // 1 · village: three houses, a pond, the road east and the road south to Adobe
+  fill(1, 8, 22, 8, ':');
+  fill(4, 4, 4, ROWS - 1, ':'); // the last tile is the gap in the hedge
+  fill(13, 5, 13, 7, ':');
+  fill(18, 9, 18, 13, ':');
+  fill(16, 13, 17, 13, ':');
   set(3, ROWS - 2, 'S'); // signpost: the road south leads to Adobe
-  [[1, 5], [2, 13], [7, 5], [6, 9], [3, 10], [8, 13], [5, 1]].forEach(([x, y]) => set(x, y, 'f'));
-  [[8, 1], [1, 1], [8, 10], [1, 14]].forEach(([x, y]) => set(x, y, 't'));
-  // village (3), grove (2, behind Rune Gate 1), lake islands (2, behind Rune Gate 2)
+  fill(8, 11, 11, 13, '~');
+  fill(9, 10, 10, 10, '~');
+  set(12, 12, '~');
+  dot('p', [[9, 12], [11, 11]]);
+  dot('t', [[1, 1], [8, 1], [21, 2], [1, 13], [21, 13], [7, 4], [17, 1]]);
+  dot('k', [[10, 2], [20, 10], [14, 13], [2, 10]]);
+  dot('r', [[16, 6], [7, 13], [12, 10], [22, 5]]);
+  dot('f', [[2, 5], [6, 5], [10, 6], [15, 10], [20, 4], [2, 12], [6, 10], [13, 11], [19, 2],
+    [11, 5], [6, 14], [15, 14], [21, 6], [19, 12], [9, 4]]);
+
+  // 2 · grove: a stream with a footbridge, two houses and the shrine
+  fill(24, 8, 46, 8, ':');
+  fill(34, 1, 34, 14, '~');
+  dot('~', [[33, 2], [33, 3], [35, 11], [35, 12], [33, 13]]);
+  set(34, 8, '=');
+  fill(30, 5, 30, 7, ':');
+  fill(40, 9, 40, 13, ':');
+  fill(38, 13, 39, 13, ':');
+  fill(42, 5, 42, 7, ':');
+  dot('t', [[25, 2], [26, 5], [25, 12], [27, 13], [31, 12], [32, 2], [37, 2], [38, 6], [45, 2],
+    [45, 5], [44, 12], [43, 14], [46, 11], [28, 10], [32, 10], [36, 14], [41, 1]]);
+  dot('k', [[27, 2], [39, 3], [44, 10], [30, 12]]);
+  dot('r', [[33, 10], [36, 5], [41, 11]]);
+  dot('f', [[26, 10], [29, 6], [31, 5], [35, 6], [37, 9], [41, 3], [43, 6], [45, 9], [39, 14],
+    [29, 14], [26, 7], [32, 6], [36, 10]]);
+
+  // 3 · lake: a long plank bridge with spurs to two islands
+  fill(51, 1, 68, 14, '~');
+  fill(55, 2, 60, 6, '.');
+  fill(60, 10, 66, 13, '.');
+  dot('~', [[55, 2], [60, 2], [55, 6], [60, 6], [66, 13], [66, 10], [60, 13]]);
+  fill(48, 8, 50, 8, ':');
+  fill(51, 8, 68, 8, '=');
+  fill(69, 8, 70, 8, ':');
+  set(58, 7, '=');
+  set(63, 9, '=');
+  dot('p', [[53, 4], [54, 11], [66, 5], [52, 13], [67, 3], [57, 12], [64, 6], [68, 12]]);
+  dot('t', [[49, 3], [49, 12], [69, 3], [70, 12], [56, 5]]);
+  dot('k', [[59, 3], [65, 11]]);
+  dot('r', [[61, 11], [50, 5]]);
+  dot('f', [[49, 6], [50, 10], [69, 10], [55, 4], [61, 12], [65, 12], [64, 13], [70, 5], [57, 6]]);
+
+  // 4 · bay: a beach with palms and a pier out to the whale
+  fill(73, 1, 82, 14, 'd');
+  set(72, 8, 'd');
+  fill(83, 0, WCOLS - 1, ROWS - 1, '~');
+  dot('d', [[83, 3], [83, 4], [83, 12], [84, 13], [83, 13]]);
+  dot('~', [[82, 6], [82, 10], [82, 1], [82, 14]]);
+  fill(82, 8, 84, 8, '=');
+  fill(85, 7, 87, 9, '='); // the end of the pier: room to stand and pitch
+  dot('y', [[74, 2], [78, 3], [73, 12], [79, 13], [81, 2], [76, 6]]);
+  dot('r', [[76, 11], [80, 11], [81, 5]]);
+
+  // village (3), grove (2), lake islands (2)
   const houses = [
-    { x: 1, y: 2 }, { x: 6, y: 2 }, { x: 6, y: 11 },
-    { x: 12, y: 1 }, { x: 12, y: 9 },
-    { x: 16, y: 1 }, { x: 15, y: 12 },
+    { x: 3, y: 2 }, { x: 12, y: 3 }, { x: 16, y: 11 },
+    { x: 29, y: 3 }, { x: 37, y: 11 },
+    { x: 57, y: 3 }, { x: 62, y: 10 },
   ];
+  houses.forEach(({ x, y }) => fill(x, y, x + 1, y + 1, 'H'));
 
-  // grove: winding path to the second gate, shrine in the south
-  [[10, 8], [11, 8], [11, 7], [11, 6], [11, 5], [11, 4], [12, 4], [13, 4],
-    [11, 9], [11, 10], [11, 11], [11, 12], [11, 13]].forEach(([x, y]) => set(x, y, ':'));
-  [[10, 2], [10, 5], [10, 11], [10, 13], [13, 13], [13, 6]].forEach(([x, y]) => set(x, y, 't'));
-  [[10, 10], [10, 3], [13, 7]].forEach(([x, y]) => set(x, y, 'f'));
-
-  // lake with a plank bridge between two small islands
-  for (let x = 15; x <= 17; x += 1) for (let y = 1; y < ROWS - 1; y += 1) set(x, y, '~');
-  for (let x = 15; x <= 17; x += 1) for (let y = 1; y <= 3; y += 1) set(x, y, '.');
-  [[17, 12], [17, 13], [15, 14], [16, 14], [17, 14]].forEach(([x, y]) => set(x, y, '.'));
-  set(15, 4, '='); set(17, 11, '=');
-  for (let y = 4; y <= 11; y += 1) set(16, y, '=');
-  set(17, 3, 'f'); set(17, 14, 'f');
-
-  houses.forEach(({ x, y }) => {
-    set(x, y, 'H'); set(x + 1, y, 'H'); set(x, y + 1, 'H'); set(x + 1, y + 1, 'H');
-  });
-
-  // arena
-  for (let x = 19; x <= 22; x += 1) for (let y = 1; y < ROWS - 1; y += 1) set(x, y, ',');
-  [[19, 2], [22, 2], [19, 13], [22, 13]].forEach(([x, y]) => set(x, y, 'P'));
-
-  // border
-  for (let x = 0; x < COLS; x += 1) { set(x, 0, 'T'); set(x, ROWS - 1, 'T'); }
-  for (let y = 0; y < ROWS; y += 1) { set(0, y, 'T'); set(COLS - 1, y, 'T'); }
-  set(4, ROWS - 1, ':'); // gap in the hedge
-
-  const gates = [{ x: 9, y: 8 }, { x: 14, y: 4 }, { x: 18, y: 11 }];
+  const gates = [{ x: 23, y: 8 }, { x: 47, y: 8 }, { x: 71, y: 8 }];
   gates.forEach(({ x, y }) => set(x, y, 'G'));
 
   return {
@@ -367,9 +434,12 @@ function buildWorld() {
     houses,
     gates,
     start: { x: 2, y: 8 },
-    npcSpots: [{ x: 3, y: 6 }, { x: 7, y: 7 }, { x: 2, y: 11 }, { x: 5, y: 13 }, { x: 12, y: 6 }],
-    shrine: { x: 12, y: 13 },
-    boss: { x: 20, y: 7 }, // 2x2
+    npcSpots: [{ x: 7, y: 7 }, { x: 10, y: 9 }, { x: 2, y: 6 }, { x: 20, y: 7 }, { x: 27, y: 7 }],
+    shrine: { x: 42, y: 4 },
+    whale: {
+      x: 88, y: 6, w: 6, h: 4,
+    },
+    pier: { x: 87, y: 8 },
     signpost: { x: 3, y: ROWS - 2 },
   };
 }
@@ -424,7 +494,7 @@ function buildSouth() {
   };
 }
 
-const WALKABLE = new Set(['.', ':', 'f', '=', ',', 'o']);
+const WALKABLE = new Set(['.', ':', 'f', '=', ',', 'o', 'd']);
 
 /* ---------- pixel art ---------- */
 
@@ -763,6 +833,17 @@ function drawGrass(g, x, y, tx, ty) {
   rect(g, '#79bb62', x + ((l >>> 3) % 14) + 1, y + ((l >>> 7) % 14) + 1, 1, 1);
 }
 
+function drawSand(g, x, y, h) {
+  rect(g, '#ead59c', x, y, TILE, TILE);
+  rect(g, '#dcc387', x + (h % 12) + 1, y + ((h >>> 5) % 12) + 2, 3, 1);
+  rect(g, '#dcc387', x + ((h >>> 11) % 12) + 1, y + ((h >>> 15) % 12) + 2, 2, 1);
+  rect(g, '#f7e9c0', x + ((h >>> 9) % 13) + 1, y + ((h >>> 13) % 13) + 1, 1, 1);
+  if (h % 9 === 0) {
+    rect(g, '#fff1e6', x + 5, y + 9, 4, 2);
+    rect(g, '#f4a7a7', x + 6, y + 8, 2, 1);
+  }
+}
+
 function drawTree(g, x, y, tx, ty, border, blossom = false) {
   const h = hash(tx, ty);
   drawGrass(g, x, y, tx, ty);
@@ -795,7 +876,7 @@ function drawTree(g, x, y, tx, ty, border, blossom = false) {
 
 function drawTerrainTile(g, grid, tx, ty) {
   const c = grid[ty][tx];
-  const at = (x, y) => (grid[y] && grid[y][x]) || 'T';
+  const at = (x, y) => (grid[y] && grid[y][x]) || c; // off the map: more of the same
   const x = tx * TILE;
   const y = ty * TILE;
   const h = hash(tx, ty);
@@ -834,8 +915,32 @@ function drawTerrainTile(g, grid, tx, ty) {
     case 'k':
       drawTree(g, x, y, tx, ty, false, true);
       break;
+    case 'd':
+    case 'y': {
+      // beach sand, with the odd shell; wet where the waves reach
+      drawSand(g, x, y, h);
+      if (at(tx + 1, ty) === '~') rect(g, '#cfb67a', x + 11, y, 5, TILE);
+      if (c === 'y') {
+        // palm tree
+        rect(g, 'rgba(0,0,0,0.2)', x + 3, y + 13, 11, 2);
+        [[8, 12], [8, 10], [7, 8], [7, 6], [6, 4]].forEach(([px, py]) => {
+          rect(g, '#7a4e26', x + px, y + py, 2, 2);
+          rect(g, '#a8743f', x + px, y + py, 1, 1);
+        });
+        rect(g, '#1d5e2e', x, y + 4, 4, 2);
+        rect(g, '#1d5e2e', x + 11, y + 4, 5, 2);
+        rect(g, '#2f8f45', x + 1, y + 2, 6, 2);
+        rect(g, '#2f8f45', x + 9, y + 2, 6, 2);
+        rect(g, '#3fae55', x + 4, y, 8, 2);
+        rect(g, '#6fd07a', x + 6, y, 3, 1);
+        rect(g, '#5a3a1a', x + 5, y + 4, 2, 2);
+        rect(g, '#5a3a1a', x + 8, y + 4, 2, 2);
+      }
+      break;
+    }
     case 'r': {
-      drawGrass(g, x, y, tx, ty);
+      if ([at(tx - 1, ty), at(tx + 1, ty), at(tx, ty - 1)].includes('d')) drawSand(g, x, y, h);
+      else drawGrass(g, x, y, tx, ty);
       g.save();
       g.translate(x, y);
       rect(g, 'rgba(0,0,0,0.22)', 2, 12, 13, 3);
@@ -956,27 +1061,23 @@ function drawTerrainTile(g, grid, tx, ty) {
   }
 }
 
-function buildTerrain(grid) {
+// the terrain of columns x0..x1-1 (one screen), drawn once into an offscreen canvas
+function buildTerrain(grid, x0 = 0, x1 = COLS) {
   const c = document.createElement('canvas');
-  c.width = COLS * TILE;
+  c.width = (x1 - x0) * TILE;
   c.height = ROWS * TILE;
   const g = c.getContext('2d');
+  g.translate(-x0 * TILE, 0);
   for (let y = 0; y < ROWS; y += 1) {
-    for (let x = 0; x < COLS; x += 1) drawTerrainTile(g, grid, x, y);
-  }
-  // walls cast a shadow to the east
-  for (let y = 0; y < ROWS; y += 1) {
-    for (let x = 0; x < COLS - 1; x += 1) {
-      if (grid[y][x] === '^' && grid[y][x + 1] !== '^') rect(g, 'rgba(0,0,0,0.18)', (x + 1) * TILE, y * TILE, 3, TILE);
-    }
+    for (let x = x0; x < x1; x += 1) drawTerrainTile(g, grid, x, y);
   }
   return c;
 }
 
-// water shimmer and pillar orbs
-function drawAnimatedTiles(g, grid, t) {
+// water shimmer and pillar orbs, for the columns on screen
+function drawAnimatedTiles(g, grid, t, x0 = 0, x1 = COLS) {
   for (let ty = 0; ty < ROWS; ty += 1) {
-    for (let tx = 0; tx < COLS; tx += 1) {
+    for (let tx = x0; tx < x1; tx += 1) {
       const c = grid[ty][tx];
       const x = tx * TILE;
       const y = ty * TILE;
@@ -1408,52 +1509,105 @@ function drawShrine(g, s, t) {
   rect(g, '#d6faff', x + 7, y + 4 + b, 1, 2);
 }
 
-function drawBoss(g, b, t, hitAt, hp, maxHp) {
-  const x = b.x * TILE;
-  const breathe = Math.round(Math.sin(t / 500));
-  const y = b.y * TILE + breathe;
-  const flash = t - hitAt < 250;
-  rect(g, 'rgba(0,0,0,0.35)', x + 2, b.y * TILE + 29, 28, 3);
-  rect(g, '#5d616c', x + 6, y + 25, 7, 6);
-  rect(g, '#5d616c', x + 19, y + 25, 7, 6);
-  rect(g, '#6b707b', x, y + 9, 4, 14);
-  rect(g, '#6b707b', x + 28, y + 9, 4, 14);
-  rect(g, '#3a3d45', x + 3, y + 5, 26, 22);
-  rect(g, '#7a7f8c', x + 4, y + 6, 24, 20);
-  for (let i = 0; i < 4; i += 1) {
-    rect(g, '#2b2d33', x + 7, y + 11 + i * 4, 18, 2);
-    const on = Math.floor(t / 300 + i * 1.7) % 3 !== 0;
-    const led = i % 2 ? '#ffb703' : '#3ddc84';
-    rect(g, on ? led : '#1f2125', x + 22, y + 11 + i * 4, 2, 2);
+// filled pixel ellipse
+function oval(g, color, cx, cy, rx, ry) {
+  g.fillStyle = color;
+  for (let dy = -ry; dy <= ry; dy += 1) {
+    const half = Math.floor(rx * Math.sqrt(1 - (dy * dy) / (ry * ry)) + 0.35);
+    g.fillRect(cx - half, cy + dy, half * 2 + 1, 1);
   }
-  rect(g, '#3a3d45', x + 7, y - 1, 18, 9);
-  rect(g, '#8d929e', x + 8, y, 16, 7);
-  rect(g, '#ff3b3b', x + 11, y + 3, 3, 2);
-  rect(g, '#ff3b3b', x + 18, y + 3, 3, 2);
-  rect(g, '#2b2d33', x + 10, y - 3, 1, 3);
-  rect(g, '#2b2d33', x + 21, y - 4, 1, 4);
-  rect(g, '#2b2d33', x + 15, y - 2, 2, 2);
-  if (flash) {
-    g.globalAlpha = 0.7;
-    rect(g, '#fff', x, y - 4, 32, 36);
-    g.globalAlpha = 1;
-  }
-  // health bar
-  const bw = 36;
-  rect(g, '#1b1f3a', x - 3, b.y * TILE - 10, bw + 2, 5);
-  rect(g, '#ff3b3b', x - 2, b.y * TILE - 9, Math.round((bw * hp) / maxHp), 3);
 }
 
-function drawTrophy(g, b, t) {
-  const x = b.x * TILE + 8;
-  const y = b.y * TILE + 6 + Math.round(Math.sin(t / 300) * 1.5);
-  g.globalAlpha = 0.3;
-  rect(g, '#f4d35e', x - 4, y - 4, 24, 24);
+// the whale account: drawn in a 64x48 design space at 1.5x (6x4.5 tiles), facing the pier,
+// wearing a monocle; it spouts gold coins once the deal is signed
+const WHALE_SCALE = 1.5;
+function drawWhale(g, b, t, hitAt, progress, won) {
+  const S = (v) => Math.round(v * WHALE_SCALE);
+  const size = (v) => Math.max(1, S(v));
+  const R = (color, rx, ry, rw, rh) => rect(g, color, S(rx), S(ry), size(rw), size(rh));
+  const O = (color, cx, cy, rx, ry) => oval(g, color, S(cx), S(cy), S(rx), S(ry));
+  const x = b.x * TILE;
+  const top = b.y * TILE;
+  const bob = Math.round(Math.sin(t / 600) * 1.5);
+  const y = top + bob;
+  const flick = Math.round(Math.sin(t / 380) * 2);
+  g.save();
+  g.translate(x, y);
+  // tail flukes
+  O(INK, 58, 9 + flick, 6, 4);
+  O(INK, 56, 17 + flick, 3, 6);
+  O('#34508f', 58, 9 + flick, 5, 3);
+  R('#34508f', 55, 11 + flick, 3, 10);
+  R('#4a6cb3', 55, 7 + flick, 5, 1);
+  // body
+  O(INK, 30, 24, 27, 14);
+  O('#3d5a99', 30, 24, 26, 13);
+  O('#5b7fc4', 26, 18, 18, 6);
+  O('#7ea0dc', 22, 15, 9, 2);
+  // belly with throat grooves
+  O('#dfe9f7', 22, 31, 18, 5);
+  for (let i = 0; i < 4; i += 1) R('#b9c8e2', 9 + i * 7, 29 + (i % 2), 5, 1);
+  // flipper
+  O(INK, 31, 32, 6, 3);
+  O('#2a3f73', 31, 32, 5, 2);
+  // eye with a gold monocle and chain
+  R(INK, 11, 19, 3, 3);
+  R('#fff', 11, 19, 1, 1);
+  R('#f4d35e', 9, 17, 7, 1);
+  R('#f4d35e', 9, 23, 7, 1);
+  R('#f4d35e', 9, 17, 1, 7);
+  R('#f4d35e', 15, 17, 1, 7);
+  g.globalAlpha = 0.35;
+  R('#e0f4ff', 10, 18, 5, 5);
   g.globalAlpha = 1;
-  rect(g, '#f4d35e', x + 2, y, 12, 8);
-  rect(g, '#f4d35e', x + 5, y + 8, 6, 4);
-  rect(g, '#c99a2e', x + 3, y + 12, 10, 3);
-  rect(g, '#fff6c9', x + 4, y + 1, 2, 4);
+  [[16, 23], [17, 24], [18, 25], [19, 25], [20, 26]].forEach(([cx, cy]) => R('#c99a2e', cx, cy, 1, 1));
+  // mouth: a smile once the deal is signed
+  if (won) {
+    R(INK, 4, 25, 2, 1);
+    R(INK, 6, 26, 10, 1);
+    R(INK, 16, 25, 2, 1);
+    R('#ff8fab', 8, 27, 6, 1);
+  } else R(INK, 4, 26, 14, 1);
+  // cheek blush
+  g.globalAlpha = won ? 0.6 : 0.3;
+  R('#ff8fab', 17, 22, 3, 2);
+  g.globalAlpha = 1;
+  // the spout: water, and gold coins once the deal is signed
+  const cycle = (t / 1000) % (won ? 1.4 : 3.2);
+  if (cycle < 1.2) {
+    const hgt = Math.round(Math.sin((cycle / 1.2) * Math.PI) * 14);
+    R('#cfeaff', 21, 10 - hgt, 2, hgt);
+    R('#ffffff', 21, 10 - hgt, 1, hgt);
+    for (let i = 0; i < 5; i += 1) {
+      const sx = 22 + Math.round(Math.cos(i * 1.3) * (4 + hgt / 3));
+      const sy = 9 - hgt + ((i * 3) % 5);
+      if (won) {
+        R('#7a6010', sx - 1, sy - 1, 4, 4);
+        R('#f4d35e', sx, sy, 2, 2);
+      } else R('#e0f4ff', sx, sy, 2, 2);
+    }
+  }
+  if (t - hitAt < 250) {
+    g.globalAlpha = 0.7;
+    O('#fff', 30, 24, 27, 14);
+    g.globalAlpha = 1;
+  }
+  g.restore();
+  // the sea laps over the lower half
+  g.globalAlpha = 0.55;
+  rect(g, '#3a7bd5', x - 2, top + S(33), S(64) + 4, S(15));
+  g.globalAlpha = 1;
+  const w = Math.floor(t / 300) % 4;
+  rect(g, '#cfeaff', x - 2 + w, top + S(33), S(22), 1);
+  rect(g, '#cfeaff', x + S(30) - w, top + S(33), S(30), 1);
+  rect(g, '#6fa8ff', x + S(6) + w, top + S(38), S(18), 1);
+  rect(g, '#6fa8ff', x + S(36) - w, top + S(41), S(16), 1);
+  // deal meter: objections countered so far
+  if (!won) {
+    rect(g, INK, x + S(6), top - 7, S(52), 5);
+    rect(g, '#1b1f3a', x + S(6) + 1, top - 6, S(52) - 2, 3);
+    rect(g, '#f4d35e', x + S(6) + 1, top - 6, Math.round((S(52) - 2) * progress), 3);
+  }
 }
 
 /* ---------- persistence ---------- */
@@ -1717,7 +1871,9 @@ export default async function decorate(block) {
     const e = content.expansions.find((x) => customerIndex(x.customer) === ci);
     return e ? { ...e, arr: e.arr || Math.round(c.arr * 0.25) } : null;
   });
-  const arrGoal = customers.reduce((sum, c, ci) => sum + c.arr + (expansions[ci]?.arr || 0), 0);
+  const { whale } = content;
+  const arrGoal = whale.arr
+    + customers.reduce((sum, c, ci) => sum + c.arr + (expansions[ci]?.arr || 0), 0);
 
   /* state */
   const fresh = () => ({
@@ -1746,8 +1902,11 @@ export default async function decorate(block) {
     refBoost: {}, // customer index -> true when a reference was shared
     expWon: {}, // customer index -> expansion ARR closed
     expMisses: {}, // customer index -> weak expansion answers
-    area: 'realm', // 'realm' or 'south' (Adobe)
+    area: 'realm', // 'realm' (the four screens side by side) or 'south' (Adobe)
     visited: [], // places that already paid their first-visit XP
+    whaleMisses: 0, // objections the whale was not convinced by
+    whaleArr: 0, // ARR of the signed whale deal
+    layout: 2, // the map version the saved position belongs to
   });
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
@@ -1759,6 +1918,14 @@ export default async function decorate(block) {
   ['refBoost', 'expWon', 'expMisses'].forEach((k) => { state[k] = state[k] || {}; });
   state.visited = state.visited || [];
   if (state.area !== 'south') state.area = 'realm';
+  if (saved && saved.layout !== 2) {
+    // saved on the old one-screen map: start again at the village gate, keep all progress
+    Object.assign(state, {
+      x: world.start.x, y: world.start.y, dir: 'right', area: 'realm', layout: 2,
+    });
+  }
+  state.whaleMisses = state.whaleMisses || 0;
+  state.whaleArr = state.whaleArr || 0;
   // what a customer's deal is still worth after failed pitches
   const PITCH_PENALTY = 0.25;
   const REFERENCE_BONUS = 1.15;
@@ -1770,7 +1937,11 @@ export default async function decorate(block) {
   const expansionOpen = (ci) => !!expansions[ci]
     && state.deals.includes(ci) && !(ci in state.expWon);
   const sum = (obj) => Object.values(obj).reduce((a, v) => a + v, 0);
-  const arrClosed = () => sum(state.arrWon) + sum(state.expWon);
+  const arrClosed = () => sum(state.arrWon) + sum(state.expWon) + state.whaleArr;
+  const WHALE_PENALTY = 0.1;
+  const whaleValue = () => Math.round(
+    whale.arr * Math.max(0.5, 1 - WHALE_PENALTY * state.whaleMisses),
+  );
   const lettersHeld = () => state.letters.filter((ri) => !state.refsDelivered.includes(ri));
   const skills = () => [
     ...state.talked.filter((ni) => npcs[ni]?.expertise).map((ni) => ({ kind: 'expertise', name: npcs[ni].expertise })),
@@ -1790,6 +1961,19 @@ export default async function decorate(block) {
   const particles = [];
 
   const save = () => writeSave(state);
+
+  // each screen's terrain is drawn the first time it is shown (behind the travel fade),
+  // so loading the page only pays for one screen
+  const terrains = new Map();
+  function terrainFor(key) {
+    if (!terrains.has(key)) {
+      terrains.set(key, key === 'south'
+        ? buildTerrain(south.grid)
+        : buildTerrain(world.grid, key * COLS, (key + 1) * COLS));
+    }
+    return terrains.get(key);
+  }
+  const currentTerrain = () => terrainFor(state.area === 'south' ? 'south' : screenOf(state.x));
   let avatar = loadAvatar();
   const contentPath = (block.dataset.source || window.location.pathname)
     .replace(/\.html$/, '').replace(/\/$/, '/index');
@@ -1816,6 +2000,7 @@ export default async function decorate(block) {
 
   // customer logo signs, positioned over the house roofs (HTML keeps logos crisp)
   const pct = (v, total) => `${(v / total) * 100}%`;
+  const local = (px) => px % (COLS * TILE); // world pixels -> pixels on the current screen
   const initials = (name) => name.split(/\s+/).map((w) => w[0]).join('')
     .slice(0, 3)
     .toUpperCase();
@@ -1828,7 +2013,7 @@ export default async function decorate(block) {
         : el('span', { text: initials(c.company) }),
     );
     Object.assign(sign.style, {
-      left: pct(c.house.x * TILE + 3, COLS * TILE),
+      left: pct(local(c.house.x * TILE + 3), COLS * TILE),
       top: pct(c.house.y * TILE + 1, ROWS * TILE),
       width: pct(26, COLS * TILE),
       height: pct(11, ROWS * TILE),
@@ -1844,7 +2029,7 @@ export default async function decorate(block) {
   // HTML labels per screen: logos and the Adobe signpost up north, library and board down south
   const place = (node, x, y, w, h) => {
     Object.assign(node.style, {
-      left: pct(x, COLS * TILE),
+      left: pct(local(x), COLS * TILE),
       top: pct(y, ROWS * TILE),
       width: pct(w, COLS * TILE),
       height: pct(h, ROWS * TILE),
@@ -1858,7 +2043,33 @@ export default async function decorate(block) {
     TILE + 12,
     8,
   );
-  const realmLabels = el('div', { class: 'questline-signs' }, signs, postLabel('Adobe ▼', world.signpost));
+  // one label layer per realm screen
+  const screenLabels = SCREEN_TITLES.map(() => el('div', { class: 'questline-signs', hidden: true }));
+  signs.forEach((sign, i) => screenLabels[screenOf(customers[i].house.x)].append(sign));
+  screenLabels[0].append(postLabel('Adobe ▼', world.signpost));
+  const gateLabels = world.gates.map((gt) => {
+    const label = place(el('div', { class: 'questline-post questline-post-gate' }), gt.x * TILE - 42, gt.y * TILE - 13, 56, 8);
+    screenLabels[screenOf(gt.x)].append(label);
+    return label;
+  });
+  // the way back west, over the gap in the trees
+  screenLabels.slice(1).forEach((layer, i) => layer.append(place(
+    el('div', { class: 'questline-post questline-post-gate', text: `◀ ${SCREEN_TITLES[i]}` }),
+    (i + 1) * COLS * TILE + 2,
+    8 * TILE - 13,
+    56,
+    8,
+  )));
+  const whaleName = el('span', { class: 'questline-whale-name', text: `🐋 ${whale.name}` });
+  const whaleArrEl = el('span', { class: 'questline-whale-arr' });
+  const whaleTag = place(
+    el('div', { class: 'questline-whale-tag' }, whaleName, whaleArrEl),
+    world.whale.x * TILE + 10,
+    world.whale.y * TILE - 22,
+    76,
+    13,
+  );
+  screenLabels[3].append(whaleTag);
   const southLabels = el(
     'div',
     { class: 'questline-signs', hidden: true },
@@ -1878,14 +2089,16 @@ export default async function decorate(block) {
       6,
     ),
   );
-  stage.append(realmLabels, southLabels);
-  let shownArea = 'realm';
+  stage.append(...screenLabels, southLabels);
+  const areaKey = () => (state.area === 'south' ? 'south' : `realm${screenOf(state.x)}`);
+  let shownArea = '';
   function applyArea() {
-    shownArea = state.area;
+    shownArea = areaKey();
     const inSouth = state.area === 'south';
-    realmLabels.hidden = inSouth;
+    const s = screenOf(state.x);
+    screenLabels.forEach((layer, i) => { layer.hidden = inSouth || i !== s; });
     southLabels.hidden = !inSouth;
-    canvas.setAttribute('aria-label', inSouth ? 'Adobe: library and leaderboard' : `${content.title} game map`);
+    canvas.setAttribute('aria-label', inSouth ? 'Adobe: library and leaderboard' : `${content.title}: ${SCREEN_TITLES[s]}`);
   }
 
   // expert nameplate: shown above the nearest expert when the player walks close
@@ -1907,7 +2120,7 @@ export default async function decorate(block) {
     const n = npcs[nearest];
     plateName.textContent = n.name;
     plateRole.textContent = `★ Expert for ${n.expertise}`;
-    plate.style.left = pct(n.x * TILE + TILE / 2, COLS * TILE);
+    plate.style.left = pct(local(n.x * TILE + TILE / 2), COLS * TILE);
     plate.style.top = pct(n.y * TILE - 12, ROWS * TILE);
   }
 
@@ -1993,6 +2206,13 @@ export default async function decorate(block) {
     });
     gateEl.textContent = `Gates ${state.gates.slice(0, numGates).filter(Boolean).length}/${numGates}`;
     signs.forEach((s, i) => s.classList.toggle('won', state.deals.includes(i)));
+    gateLabels.forEach((label, i) => {
+      label.textContent = state.gates[i] ? `${SCREEN_TITLES[i + 1]} ▶` : `Rune Gate ${i + 1}`;
+    });
+    whaleArrEl.textContent = state.won && state.whaleArr
+      ? `✓ ${money(state.whaleArr)} ARR`
+      : `${money(whaleValue())} ARR`;
+    whaleTag.classList.toggle('won', !!state.whaleArr);
     const nextGate = state.gates.findIndex((open) => !open);
     let objective;
     const ready = customers.some((c, i) => !state.deals.includes(i) && !missingFor(c).length);
@@ -2002,7 +2222,7 @@ export default async function decorate(block) {
     } else if (state.deals.length < customers.length) {
       objective = 'Objective: learn the skills customers need (🔒 doors). Experts with ! teach them';
     } else if (nextGate >= 0) objective = `Objective: open Rune Gate ${nextGate + 1}`;
-    else objective = `Objective: defeat ${content.bossName}`;
+    else objective = `Objective: land the whale, ${whale.name} (${money(whaleValue())} ARR), in ${SCREEN_TITLES[3]}`;
     const side = [];
     const openExp = customers.filter((_, ci) => expansionOpen(ci)).length;
     if (openExp) side.push(`${openExp} expansion${openExp === 1 ? '' : 's'} (blue +)`);
@@ -2013,17 +2233,17 @@ export default async function decorate(block) {
   /* world queries */
   const npcAt = (x, y) => npcs.findIndex((n) => n.x === x && n.y === y);
   const gateAt = (x, y) => world.gates.findIndex((gt) => gt.x === x && gt.y === y);
-  const isBoss = (x, y) => state.bossHp > 0
-    && x >= world.boss.x && x <= world.boss.x + 1 && y >= world.boss.y && y <= world.boss.y + 1;
+  const isWhale = (x, y) => x >= world.whale.x && x < world.whale.x + world.whale.w
+    && y >= world.whale.y && y < world.whale.y + world.whale.h;
   const isShrine = (x, y) => x === world.shrine.x && y === world.shrine.y;
   const customerAt = (x, y) => customers.findIndex(
     (c) => y === c.house.y + 1 && (x === c.house.x || x === c.house.x + 1),
   );
 
   function walkable(x, y) {
-    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
-    if (state.area === 'south') return WALKABLE.has(south.grid[y][x]);
-    if (npcAt(x, y) >= 0 || isBoss(x, y) || isShrine(x, y)) return false;
+    if (x < 0 || y < 0 || y >= ROWS) return false;
+    if (state.area === 'south') return x < COLS && WALKABLE.has(south.grid[y][x]);
+    if (x >= WCOLS || npcAt(x, y) >= 0 || isWhale(x, y) || isShrine(x, y)) return false;
     const c = world.grid[y][x];
     if (c === 'G') return state.gates[gateAt(x, y)];
     return WALKABLE.has(c);
@@ -2062,7 +2282,11 @@ export default async function decorate(block) {
     const gi = gateAt(x, y);
     if (gi >= 0 && !state.gates[gi]) return { type: 'gate', index: gi, label: `read Rune Gate ${gi + 1}` };
     if (isShrine(x, y)) return { type: 'shrine', label: 'touch the Shrine of Insight' };
-    if (isBoss(x, y)) return { type: 'boss', label: `challenge ${content.bossName}` };
+    if (isWhale(x, y)) {
+      return state.whaleArr
+        ? { type: 'whale', label: `wave at ${whale.name}` }
+        : { type: 'whale', label: `pitch ${whale.name} (${money(whaleValue())} ARR)` };
+    }
     return null;
   }
 
@@ -2298,7 +2522,7 @@ export default async function decorate(block) {
       ...q.wrong.map((w) => ({ label: w, value: false, numbered: true })),
     ]);
     const ok = await dialog.open({
-      speaker, lines, tone: speaker.startsWith(content.bossName) ? 'boss' : null, choices: options,
+      speaker, lines, tone: speaker.startsWith(whale.name) ? 'boss' : null, choices: options,
     });
     state.history.push(ok);
     save();
@@ -2601,7 +2825,7 @@ export default async function decorate(block) {
     state.won = true;
     syncAvatar({ quiet: true });
     if (!state.finishedIn) state.finishedIn = Date.now() - (state.startedAt || Date.now());
-    burst(world.boss.x + 0.5, world.boss.y + 0.5, '#f4d35e', 40);
+    burst(world.whale.x + 2, world.whale.y + 0.5, '#f4d35e', 40);
     updateHud();
     save();
     const right = state.history.filter(Boolean).length;
@@ -2617,7 +2841,7 @@ export default async function decorate(block) {
         tone: 'good',
         title: `🏅 ${content.title} cleared!`,
         lines: [
-          `${content.bossName} has been defeated.`,
+          `🐋 ${whale.name} signed: ${money(state.whaleArr)} ARR.`,
           levelLine,
           summary,
           customers.length ? `Deals won: ${state.deals.length}/${customers.length}` : '',
@@ -2644,23 +2868,42 @@ export default async function decorate(block) {
     }
   }
 
-  async function fightBoss({ skipIntro = false, story = false } = {}) {
+  const whaleSpeaker = () => (whale.contact ? `${whale.name} · ${whale.contact}` : whale.name);
+
+  async function pitchWhale({ skipIntro = false, story = false } = {}) {
+    if (state.whaleArr) {
+      await dialog.open({
+        tone: 'good',
+        speaker: whaleSpeaker(),
+        lines: ['“Best decision we made all year. See you at the QBR!”', `💰 ${money(state.whaleArr)} ARR signed`],
+        link: whale.link,
+        choices: next('🐋 Wave'),
+      });
+      return true;
+    }
     if (state.deals.length < customers.length) {
       await dialog.open({
         tone: 'boss',
-        speaker: content.bossName,
-        lines: ['“Ha! You haven’t even won the village accounts. Come back when customers trust you.”'],
+        speaker: whaleSpeaker(),
+        lines: [
+          '“We only buy from vendors our peers trust. Win every account in the realm, then we talk.”',
+          `${money(whaleValue())} ARR is on the table.`,
+        ],
         note: `Deals won: ${state.deals.length}/${customers.length}`,
-        choices: next('Retreat'),
+        choices: next('Not yet'),
       });
       return false;
     }
     if (!skipIntro) {
       const go = await dialog.open({
         tone: 'boss',
-        speaker: content.bossName,
-        lines: ['“Why would anyone switch from me? Everyone already knows me.”', `Counter ${maxHp} objection${maxHp === 1 ? '' : 's'} to win the deal.`],
-        choices: [{ label: 'Make your case', value: true, primary: true }, { label: 'Retreat', value: false }],
+        speaker: whaleSpeaker(),
+        lines: [
+          `“We run everything on ${content.bossName}. Why would we move?”`,
+          `🐋 ${money(whaleValue())} ARR on the table. Counter ${maxHp} objection${maxHp === 1 ? '' : 's'} to land the deal; every miss trims ${WHALE_PENALTY * 100}% off it.`,
+        ],
+        link: whale.link,
+        choices: [{ label: 'Make your pitch', value: true, primary: true }, { label: 'Not yet', value: false }],
       });
       if (!go) return false;
     }
@@ -2669,36 +2912,41 @@ export default async function decorate(block) {
       const idx = queue[0];
       const q = content.objections[idx];
       const id = `o${idx}`;
-      const ok = await ask(q, `${content.bossName} objects`, [`“${q.prompt}”`, 'Pick your best response:']);
+      const ok = await ask(q, `${whale.name} objects`, [`“${q.prompt}”`, 'Pick your best response:']);
       if (ok) {
         queue = queue.slice(1);
         state.bossSolved.push(idx);
         state.bossHp = maxHp - state.bossSolved.length;
         bossHitAt = performance.now();
-        burst(world.boss.x + 0.5, world.boss.y + 0.5, '#ffffff', 16);
+        burst(world.whale.x + 2, world.whale.y + 1.5, '#ffffff', 16);
         gain(reward(XP.objection, id), 'objection countered');
         if (state.bossHp > 0) {
           await dialog.open({
-            tone: 'good', title: 'Direct hit!', lines: [`${content.bossName} staggers. ${state.bossHp} objection${state.bossHp === 1 ? '' : 's'} left.`], choices: next('Keep going'),
+            tone: 'good', title: 'Objection handled!', lines: [`${whale.name} nods slowly. ${state.bossHp} objection${state.bossHp === 1 ? '' : 's'} left.`], choices: next('Keep going'),
           });
         }
       } else {
         miss(id);
+        state.whaleMisses += 1;
+        updateHud();
+        save();
         queue = [...queue.slice(1), idx];
         const goOn = await dialog.open({
           tone: 'bad',
-          title: 'Blocked!',
-          lines: [`${content.bossName} shrugs it off. Better response: ${q.answer}`],
-          note: 'No XP this time. The objection will come back.',
+          title: 'Not convinced',
+          lines: [`${whale.name} frowns. Better response: ${q.answer}`],
+          note: `The deal is now worth ${money(whaleValue())}. The objection will come back.`,
           link: q.link,
           choices: story ? next('Continue') : [
             { label: 'Continue', value: true, primary: true },
-            { label: 'Retreat and review', value: false },
+            { label: 'Step back and review', value: false },
           ],
         });
         if (!goOn) return false;
       }
     }
+    state.whaleArr = whaleValue();
+    toast(`🐋 +${money(state.whaleArr)} ARR`, 'skill');
     await victory();
     return true;
   }
@@ -2936,7 +3184,7 @@ export default async function decorate(block) {
     await dialog.open({
       speaker: 'Signpost',
       lines: inSouth
-        ? [`▲ ${content.title}`, 'Experts, customers, the rune gates and the boss.']
+        ? [`▲ ${content.title}`, 'Experts, customers, the rune gates and, far to the east, the whale.']
         : ['▼ Adobe', 'The Field readiness library and the top 10 board.'],
       choices: next('OK'),
     });
@@ -2979,7 +3227,7 @@ export default async function decorate(block) {
     else if (target.type === 'customer') run(() => visitCustomer(target.index));
     else if (target.type === 'gate') run(() => challengeGate(target.index));
     else if (target.type === 'shrine') run(visitShrine);
-    else if (target.type === 'boss') run(() => fightBoss());
+    else if (target.type === 'whale') run(() => pitchWhale());
     else if (target.type === 'library') run(openLibrary);
     else if (target.type === 'board') run(openLeaderboard);
     else if (target.type === 'signpost') run(readSignpost);
@@ -3001,9 +3249,9 @@ export default async function decorate(block) {
       for (let gi = 0; gi < numGates; gi += 1) {
         while (!state.gates[gi]) await challengeGate(gi, { skipIntro: true });
       }
-      while (state.bossHp > 0) await fightBoss({ skipIntro: state.bossHp < maxHp, story: true });
-      state.x = world.boss.x - 1;
-      state.y = world.boss.y + 1;
+      while (!state.whaleArr) await pitchWhale({ skipIntro: state.bossHp < maxHp, story: true });
+      state.x = world.pier.x;
+      state.y = world.pier.y;
       state.dir = 'right';
       state.area = 'realm';
       save();
@@ -3061,9 +3309,10 @@ export default async function decorate(block) {
       motion.ty = state.y;
       save();
       applyArea();
+      currentTerrain(); // draw the new screen while the stage is still faded out
       stage.classList.remove('questline-fading');
       busy = false;
-      toast(to.area === 'south' ? '📍 Adobe' : `📍 ${content.title}`, 'skill');
+      toast(state.area === 'south' ? '📍 Adobe' : `📍 ${SCREEN_TITLES[screenOf(state.x)]}`, 'skill');
     }, 220);
   }
 
@@ -3083,7 +3332,12 @@ export default async function decorate(block) {
       });
       return;
     }
-    if (walkable(state.x + dx, state.y + dy)) {
+    const nx = state.x + dx;
+    if (state.area === 'realm' && screenOf(nx) !== screenOf(state.x) && walkable(nx, state.y + dy)) {
+      travel({ x: nx, y: state.y + dy, dir }); // through a gate onto the next screen
+      return;
+    }
+    if (walkable(nx, state.y + dy)) {
       motion.moving = true;
       motion.tx = state.x + dx;
       motion.ty = state.y + dy;
@@ -3146,20 +3400,15 @@ export default async function decorate(block) {
   /* loop */
   let lastHint = null;
 
-  /* atmosphere: drifting pollen, arena embers, cloud shadows, light */
+  /* atmosphere: drifting pollen, cloud shadows, light */
   const W = COLS * TILE;
   const H = ROWS * TILE;
-  const ARENA_X = 18 * TILE;
-  const motes = Array.from({ length: 34 }, (_, i) => {
-    const ember = i % 3 === 0;
-    return {
-      ember,
-      x: ember ? ARENA_X + 8 + Math.random() * (W - ARENA_X - 24) : Math.random() * (ARENA_X - 16),
-      y: Math.random() * H,
-      phase: Math.random() * 6,
-      speed: 4 + Math.random() * 8,
-    };
-  });
+  const motes = Array.from({ length: 26 }, () => ({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    phase: Math.random() * 6,
+    speed: 4 + Math.random() * 8,
+  }));
   const butterflies = [
     {
       x: 48, y: 70, rx: 22, ry: 10, speed: 0.7, phase: 0, color: '#ffd166', light: '#fff6c9',
@@ -3176,19 +3425,11 @@ export default async function decorate(block) {
   ];
   function updateMotes(dt) {
     motes.forEach((m) => {
-      if (m.ember) {
-        m.y -= m.speed * 1.6 * dt;
-        if (m.y < TILE) {
-          m.y = H - TILE;
-          m.x = ARENA_X + 8 + Math.random() * (W - ARENA_X - 24);
-        }
-      } else {
-        m.x += m.speed * dt;
-        m.y -= m.speed * 0.3 * dt;
-        if (m.x > ARENA_X - 8 || m.y < 0) {
-          m.x = Math.random() * 40;
-          m.y = Math.random() * H;
-        }
+      m.x += m.speed * dt;
+      m.y -= m.speed * 0.3 * dt;
+      if (m.x > W || m.y < 0) {
+        m.x = Math.random() * 40;
+        m.y = Math.random() * H;
       }
     });
   }
@@ -3220,47 +3461,53 @@ export default async function decorate(block) {
       hintEl.textContent = hint || ' ';
       lastHint = hint;
     }
-    if (shownArea !== state.area) applyArea();
+    if (shownArea !== areaKey()) applyArea();
     updatePlate(!busy && state.area === 'realm');
   }
 
-  let terrain = null;
-  let shade = null;
+  let shades = null;
   let cloud = null;
-  let southTerrain = null;
   let southShade = null;
-  function buildOverlays() {
-    terrain = buildTerrain(world.grid);
-    southTerrain = buildTerrain(south.grid);
-    // golden-hour light over Adobe
-    southShade = document.createElement('canvas');
-    southShade.width = W;
-    southShade.height = H;
-    const ss = southShade.getContext('2d');
-    const sun = ss.createRadialGradient(W * 0.85, -20, 10, W * 0.85, -20, W * 0.9);
-    sun.addColorStop(0, 'rgba(255,214,150,0.28)');
-    sun.addColorStop(1, 'rgba(255,170,120,0)');
-    ss.fillStyle = sun;
-    ss.fillRect(0, 0, W, H);
-    const sv = ss.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, W * 0.62);
-    sv.addColorStop(0, 'rgba(0,0,0,0)');
-    sv.addColorStop(1, 'rgba(40,10,40,0.35)');
-    ss.fillStyle = sv;
-    ss.fillRect(0, 0, W, H);
-    shade = document.createElement('canvas');
-    shade.width = W;
-    shade.height = H;
-    const sg = shade.getContext('2d');
-    const dark = sg.createLinearGradient(ARENA_X - 24, 0, ARENA_X + 24, 0);
-    dark.addColorStop(0, 'rgba(18,8,40,0)');
-    dark.addColorStop(1, 'rgba(18,8,40,0.42)');
-    sg.fillStyle = dark;
-    sg.fillRect(ARENA_X - 24, 0, W - ARENA_X + 24, H);
+  // a light layer per screen: soft vignette, plus a tint (a sunset over the bay)
+  function makeShade(paint) {
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const sg = c.getContext('2d');
+    paint(sg);
     const vig = sg.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, W * 0.62);
     vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(10,6,24,0.45)');
+    vig.addColorStop(1, 'rgba(10,6,24,0.4)');
     sg.fillStyle = vig;
     sg.fillRect(0, 0, W, H);
+    return c;
+  }
+  const wash = (color) => (sg) => {
+    sg.fillStyle = color;
+    sg.fillRect(0, 0, W, H);
+  };
+  function buildOverlays() {
+    // golden-hour light over Adobe
+    southShade = makeShade((sg) => {
+      const sun = sg.createRadialGradient(W * 0.85, -20, 10, W * 0.85, -20, W * 0.9);
+      sun.addColorStop(0, 'rgba(255,214,150,0.28)');
+      sun.addColorStop(1, 'rgba(255,170,120,0)');
+      sg.fillStyle = sun;
+      sg.fillRect(0, 0, W, H);
+    });
+    shades = [
+      makeShade(() => {}),
+      makeShade(wash('rgba(10,50,30,0.14)')), // the grove is shady
+      makeShade(wash('rgba(120,200,255,0.06)')), // the lake is bright
+      makeShade((sg) => {
+        const sun = sg.createRadialGradient(W * 0.92, H * 0.1, 8, W * 0.92, H * 0.1, W * 0.85);
+        sun.addColorStop(0, 'rgba(255,190,120,0.38)');
+        sun.addColorStop(0.5, 'rgba(255,120,140,0.12)');
+        sun.addColorStop(1, 'rgba(80,40,120,0.08)');
+        sg.fillStyle = sun;
+        sg.fillRect(0, 0, W, H);
+      }),
+    ];
     cloud = document.createElement('canvas');
     cloud.width = 120;
     cloud.height = 48;
@@ -3307,7 +3554,7 @@ export default async function decorate(block) {
   }
 
   function renderSouth(t) {
-    g.drawImage(southTerrain, 0, 0);
+    g.drawImage(terrainFor('south'), 0, 0);
     drawAnimatedTiles(g, south.grid, t);
     drawLibrary(g, south.library.x * TILE, south.library.y * TILE, t);
     const at = (p) => [p.x * TILE, p.y * TILE];
@@ -3324,7 +3571,6 @@ export default async function decorate(block) {
     g.drawImage(southShade, 0, 0);
     // drifting blossom petals
     motes.forEach((m, i) => {
-      if (m.ember) return;
       const wob = Math.sin(t / 700 + m.phase) * 3;
       g.globalAlpha = 0.55 + 0.35 * Math.sin(t / 300 + m.phase * 3);
       rect(g, i % 2 ? '#ffc2d6' : '#fff0f6', Math.round(m.x + wob), Math.round(m.y), i % 3 ? 1 : 2, 1);
@@ -3334,13 +3580,17 @@ export default async function decorate(block) {
   }
 
   function render(t) {
-    if (!terrain) buildOverlays();
+    if (!shades) buildOverlays();
     if (state.area === 'south') {
       renderSouth(t);
       return;
     }
-    g.drawImage(terrain, 0, 0);
-    drawAnimatedTiles(g, world.grid, t);
+    const scr = screenOf(state.x);
+    const ox = scr * W;
+    g.save();
+    g.translate(-ox, 0);
+    g.drawImage(terrainFor(scr), ox, 0);
+    drawAnimatedTiles(g, world.grid, t, scr * COLS, (scr + 1) * COLS);
     const bang = (x, y, phase, color = '#e63946', bg = '#fff') => {
       const by = y + Math.round(Math.sin(t / 250 + phase) * 1.5);
       rect(g, INK, x - 1, by - 1, 8, 10);
@@ -3390,40 +3640,44 @@ export default async function decorate(block) {
         draw: () => drawPost(g, world.signpost.x * TILE, world.signpost.y * TILE),
       },
     ];
-    if (state.bossHp > 0) {
-      actors.push({
-        y: world.boss.y * TILE + TILE,
-        draw: () => drawBoss(g, world.boss, t, bossHitAt, state.bossHp, maxHp),
-      });
-    } else {
-      actors.push({ y: world.boss.y * TILE, draw: () => drawTrophy(g, world.boss, t) });
-    }
+    actors.push({
+      y: (world.whale.y + 2) * TILE,
+      draw: () => {
+        const progress = maxHp ? 1 - state.bossHp / maxHp : 1;
+        drawWhale(g, world.whale, t, bossHitAt, progress, !!state.whaleArr);
+      },
+    });
     actors.sort((a, b) => a.y - b.y).forEach((a) => a.draw());
+    g.restore();
 
-    // clouds drift over the land
+    // clouds drift over the land, then each screen's light
     drawClouds(t);
-
-    // dusk over the arena, then the lights that cut through it
-    g.drawImage(shade, 0, 0);
-    if (state.bossHp > 0) {
-      const bx = world.boss.x * TILE;
-      const by = world.boss.y * TILE + Math.round(Math.sin(t / 500));
-      glow(g, bx + 12, by + 4, 9, '#ff2a2a', 0.9);
-      glow(g, bx + 19, by + 4, 9, '#ff2a2a', 0.9);
-    } else {
-      glow(g, world.boss.x * TILE + 16, world.boss.y * TILE + 14, 26, '#7a6010', 1);
+    g.drawImage(shades[scr], 0, 0);
+    g.save();
+    g.translate(-ox, 0);
+    if (state.whaleArr) {
+      glow(g, world.whale.x * TILE + 33, world.whale.y * TILE - 4, 36, '#7a6010', 0.8 + 0.2 * Math.sin(t / 300));
     }
     glow(g, world.shrine.x * TILE + 8, world.shrine.y * TILE + 6, 22, '#1d6f88', 0.7 + 0.2 * Math.sin(t / 400));
-
-    motes.forEach((m) => {
-      const wob = Math.sin(t / 700 + m.phase) * 3;
-      const flick = 0.5 + 0.5 * Math.sin(t / 200 + m.phase * 3);
-      g.globalAlpha = m.ember ? 0.5 + 0.5 * flick : 0.35 + 0.35 * flick;
-      rect(g, m.ember ? '#ff9e3d' : '#fff6b0', Math.round(m.x + wob), Math.round(m.y), 1, 1);
-    });
-    g.globalAlpha = 1;
-
     drawParticles();
+    g.restore();
+
+    if (scr < 3) {
+      motes.forEach((m) => {
+        const wob = Math.sin(t / 700 + m.phase) * 3;
+        g.globalAlpha = 0.35 + 0.35 * (0.5 + 0.5 * Math.sin(t / 200 + m.phase * 3));
+        rect(g, '#fff6b0', Math.round(m.x + wob), Math.round(m.y), 1, 1);
+      });
+    } else {
+      // sun glints on the sea
+      motes.forEach((m) => {
+        const sea = 83 * TILE - ox;
+        const gx = Math.round(sea + ((m.x * 0.55) % (W - sea)));
+        g.globalAlpha = Math.max(0, Math.sin(t / 260 + m.phase * 5));
+        rect(g, '#fff6d6', gx, Math.round(m.y), 3, 1);
+      });
+    }
+    g.globalAlpha = 1;
   }
 
   let last = performance.now();

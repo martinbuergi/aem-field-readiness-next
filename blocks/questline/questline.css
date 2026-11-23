@@ -841,6 +841,47 @@
   text-shadow: 0 0.15cqw 0 #5a3418;
 }
 
+/* gate boards: the rune gate's name, then where it leads once open */
+.questline .questline-post-gate {
+  font-size: 1.05cqw;
+}
+
+/* the whale account's name and deal size, floating over the bay */
+.questline .questline-whale-tag {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2cqw;
+  font-family: var(--ql-pixel-font);
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.questline .questline-whale-name {
+  color: #fff;
+  font-size: 1.3cqw;
+  text-shadow: 0 0.2cqw 0 #10204a, 0 0 0.6cqw rgb(16 32 74 / 80%);
+}
+
+.questline .questline-whale-arr {
+  padding: 0.15cqw 0.7cqw;
+  border-radius: 0.5cqw;
+  background: #1b7a45;
+  color: #fff;
+  font-size: 1.45cqw;
+  box-shadow: 0 0.2cqw 0 rgb(0 0 0 / 35%);
+}
+
+.questline .questline-whale-tag.won .questline-whale-arr {
+  background: var(--ql-gold);
+  color: #2a1a0e;
+}
+
 /* the library's name on its frieze */
 .questline .questline-frieze {
   position: absolute;
