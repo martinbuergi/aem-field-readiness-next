@@ -1088,3 +1088,78 @@
     display: none;
   }
 }
+
+/* three audiences: the form switch under the objective */
+.questline .questline-forms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 0 4px 8px;
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+}
+
+.questline .questline-forms[hidden],
+.questline .questline-streak[hidden] {
+  display: none;
+}
+
+.questline .questline-form {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--ql-night-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ql-ink);
+  font-family: var(--ql-pixel-font);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.questline .questline-form:hover {
+  border-color: var(--ql-gold);
+}
+
+.questline .questline-form[aria-pressed='true'] {
+  border-color: var(--ql-gold);
+  background: var(--ql-night-2);
+}
+
+.questline .questline-form-bot[aria-pressed='true'] {
+  border-color: var(--ql-good);
+}
+
+.questline .questline-form-agent[aria-pressed='true'] {
+  border-color: #7fd3ff;
+}
+
+/* the frame takes the colour of the form */
+.questline[data-form='bot'] .questline-stage {
+  box-shadow:
+    0 0 0 2px #0b0a14,
+    0 0 0 5px #1b7a45,
+    0 0 0 7px #0b0a14,
+    0 10px 30px rgb(0 0 0 / 45%);
+}
+
+.questline[data-form='agent'] .questline-stage {
+  box-shadow:
+    0 0 0 2px #0b0a14,
+    0 0 0 5px #2f6fd6,
+    0 0 0 7px #0b0a14,
+    0 10px 30px rgb(0 0 0 / 45%);
+}
+
+.questline .questline-streak {
+  color: #ffb347;
+  font-weight: 700;
+}
+
+/* all three audiences served */
+.questline .questline-sign.triple .questline-sign-arr {
+  background: linear-gradient(90deg, #f4d35e, #3ddc84, #7fd3ff);
+}

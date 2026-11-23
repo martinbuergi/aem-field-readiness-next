@@ -30,12 +30,22 @@
  *   Expansion | <customer> | <upsell ask> | <best answer> | <weak answer> | ... | <ARR> | <link>
  *             Side quest: after a deal is won the customer asks for more. A right answer adds
  *             the expansion ARR (default 25% of the deal); a weak one costs 25% of it.
+ *   Bot       | <question for the bot form, "{company}" allowed> | <best> | <weak> | ... | <link>
+ *   Agent     | <question for the personal agent form> | <best> | <weak> | ... | <link>
+ *             After a deal is won, the player can come back as a bot (crawl the site) and as a
+ *             personal agent (act for a buyer). Each right answer adds 10% of the deal; both
+ *             together add a triple-play bonus of 5% more.
  *   Tip       | <field tip the Oracle shares> | <link>
  *             The Oracle stands on the east shore of the lake; each bump shares the next tip.
  *   Myth      | <claim, e.g. "Headless CMS is all I need"> | <best answer> | <weak answer> | ...
  *             | <ARR, e.g. "$50k"> | <link>
  *             Skeptics wander the trails and make these claims; busting a myth adds its ARR
  *             (default $50k) once. A weak answer earns nothing; the myth comes back later.
+ *   Myth, Objection, Puzzle, Bot and Agent rows take two optional tagged cells:
+ *     "Why: <explanation>"    the Oracle explains it after a wrong answer (and in the journal)
+ *     "For: bots" / "For: agents" (Myth and Objection only) the audience the answer is for:
+ *                             skeptics with such a myth only listen to that form, and the
+ *                             whale's objections come in three waves: humans, bots, agents.
  *   Resource  | <title> | <description> | <link>
  *             Extra collateral shown in the Field readiness library (south of the realm).
  *             The library also lists every expert, play, customer, rune gate question and
@@ -51,6 +61,11 @@
  * The player starts at level 0 and earns XP for every
  * conversation and correct answer; expertise areas and plays become skills.
  * Any cell that only contains a link is treated as the "learn more" link.
+ *
+ * Three audiences: learning the play named like the "forms.play" text (default "Three
+ * Audiences") lets the player switch between human, bot and personal agent (keys 1, 2, 3 or Q).
+ * Each form looks different and sees the world differently. Without such a play, switching
+ * unlocks with the first deal won.
  *
  * Avatar: on the first visit players create their seller (name, hair style, hair colour,
  * skin tone). It is kept in the browser and, when the game runs as a DA app
@@ -82,6 +97,10 @@ const XP = {
   reference: 10, // sharing the right customer story
   expansion: 15, // winning an upsell
   library: 5, // first visit to the library
+  sign: 3, // structured data found in bot form
+  task: 10, // a bot or agent task at a customer
+  triple: 10, // all three audiences served at a customer
+  daily: 10, // the daily myth
 };
 const levelOf = (xp) => Math.floor(xp / XP_PER_LEVEL);
 const MAX_GATES = 3;
@@ -100,6 +119,25 @@ const KEYMAP = {
   KeyD: 'right',
 };
 const ACTION_KEYS = ['Space', 'Enter', 'KeyE'];
+
+// three audiences: the player switches between human, bot and personal agent
+const FORMS = ['human', 'bot', 'agent'];
+const FORM_ICON = { human: '🧑', bot: '🤖', agent: '🦾' };
+const FORM_COLOR = { human: '#f4d35e', bot: '#3ddc84', agent: '#7fd3ff' };
+const FORM_SPEED = { human: 1, bot: 1.5, agent: 1.2 };
+const FORM_KEYS = {
+  Digit1: 'human', Digit2: 'bot', Digit3: 'agent', Numpad1: 'human', Numpad2: 'bot', Numpad3: 'agent',
+};
+const TASK_SHARE = { bot: 0.1, agent: 0.1, triple: 0.05 }; // of the deal's ARR
+const STREAK_STEPS = [[5, 2], [3, 1.5]]; // right answers in a row -> reward multiplier
+// "For: bots" -> 'bot'; anything that is not about bots or agents is for humans
+function audienceOf(text) {
+  const t = (text || '').toLowerCase();
+  if (/agent/.test(t)) return 'agent';
+  if (/bot|crawl|search|machine/.test(t)) return 'bot';
+  return 'human';
+}
+const aud = (q) => q?.audience || 'human';
 
 const DEFAULT_CONTENT = {
   title: 'The quest for FY27',
@@ -132,6 +170,44 @@ const DEFAULT_CONTENT = {
     answer: 'Move section by section while the old site keeps running; aem.new imports a page in minutes to get started.',
     wrong: ['True, plan for three years.', 'Only if you migrate everything in one weekend.'],
     arr: 50000,
+    link: null,
+  }],
+  bots: [{
+    prompt: 'What helps a crawler index {company}’s pages?',
+    answer: 'Fast, server-rendered HTML with clear headings and structured data',
+    wrong: ['A page that only renders after a big JavaScript bundle', 'Product text hidden inside images'],
+    why: 'Crawlers read the HTML first. Fast pages with real text and schema.org data get crawled fully and understood.',
+    link: null,
+  }, {
+    prompt: 'An AI search engine wants to quote {company}. What makes it cite them correctly?',
+    answer: 'Clean, semantic content at stable URLs that answers real questions',
+    wrong: ['Blocking every crawler to protect the brand', 'Keyword-stuffing every page'],
+    why: 'AI answers quote sources they can parse and trust. Clear, factual pages win the citation.',
+    link: null,
+  }, {
+    prompt: 'How do bots find every new page {company} publishes?',
+    answer: 'An up-to-date sitemap and internal links, published automatically',
+    wrong: ['They guess the URLs', 'Only through paid ads'],
+    why: 'Edge Delivery keeps the sitemap and links current on publish, so crawlers see new pages right away.',
+    link: null,
+  }],
+  agents: [{
+    prompt: 'A buyer’s personal agent must book a demo with {company}. What does it need?',
+    answer: 'A clear, structured page with a simple form it can fill in',
+    wrong: ['A chat popup that only opens on mouse hover', 'A PDF brochure with a phone number'],
+    why: 'Agents act through the page itself. Plain HTML forms and clear labels let them finish the task.',
+    link: null,
+  }, {
+    prompt: 'An agent compares {company} with two rivals for its user. What wins?',
+    answer: 'Accurate facts like pricing and specs in readable markup',
+    wrong: ['A flashy animation on the homepage', 'Big claims with no details'],
+    why: 'Agents shortlist what they can verify. Readable facts beat visual polish they cannot see.',
+    link: null,
+  }, {
+    prompt: 'An agent opens {company}’s product page. What makes it give up?',
+    answer: 'Key details that only appear after scripts, clicks and popups',
+    wrong: ['Fast HTML with clear product data', 'An up-to-date sitemap'],
+    why: 'If the facts are not in the page, the agent moves on to a competitor that has them.',
     link: null,
   }],
 };
@@ -212,6 +288,53 @@ const TEXTS = {
   'myth.lost.title': 'Not convinced',
   'myth.lost': '{who}: “See? I knew it.”',
   'myth.lost.note': 'No ARR this time. Skeptics keep wandering the trails: try again when you meet one.',
+  'oracle.explain': '🧙 {oracle}: {why}',
+  'form.human': 'Human',
+  'form.bot': 'Bot',
+  'form.agent': 'Personal agent',
+  'form.human.about': 'talks to people: experts, customers, skeptics and the whale.',
+  'form.bot.about': 'fast, sees hidden structured data (</> stones) and crawls the sites of customers you won.',
+  'form.agent.about': 'acts for a buyer and completes tasks on the sites of customers you won.',
+  'forms.play': 'Three Audiences',
+  'forms.unlock.title': '🔓 New ability: switch forms',
+  'forms.unlock': 'Every site has three audiences: humans who read, bots that crawl and personal agents that act for a buyer. Now you can become each one.',
+  'forms.keys': 'Switch with 1 🧑, 2 🤖, 3 🦾 (or Q), or the form buttons under the map. Your journal: J.',
+  'forms.locked': '🔒 Learn the {play} from {teacher} to switch forms.',
+  'forms.locked.deal': '🔒 Win your first deal to switch forms.',
+  'forms.nochat': '{icon} A {form} can’t chat. Press 1 to switch back to 🧑 Human.',
+  'forms.wrongmyth': '{who}’s myth is about {form}s: switch to {icon} to answer it.',
+  'bot.title': '🤖 Crawl {company}',
+  'agent.title': '🦾 Act for a buyer at {company}',
+  'bot.blocked': '🤖 {company}’s pages are too slow to crawl. Win the deal first (🧑).',
+  'agent.blocked': '🦾 Agents can’t work with {company}’s site yet. Win the deal first (🧑).',
+  'bot.won': 'Indexed! {company} now shows up in search and AI answers.',
+  'agent.won': 'Task done: a buyer’s agent booked a demo with {company}.',
+  'bot.failed': 'Crawl failed',
+  'agent.failed': 'The agent gave up',
+  'bot.done': '🤖 {company} is already indexed.',
+  'agent.done': '🦾 Agents already work smoothly with {company}.',
+  'triple.title': '🧑🤖🦾 Triple play: {company}',
+  'triple.text': 'Humans, bots and personal agents all get what they need from {company}.',
+  'bot.sign.title': '</> Structured data found',
+  'bot.signs': 'Structured data (schema.org) tells search engines and AI what a page is: a product, a price, an event.\nBots read the HTML first. Fast, server-rendered pages get crawled more often and more completely.\nAI answers quote sources they can parse. Clear headings and short, factual paragraphs get cited.\nA sitemap and clean internal links help crawlers find every new page the moment it is published.',
+  'gate.audience': 'This rune answers to all three audiences. Walk into it as 🧑 Human, 🤖 Bot and 🦾 Personal agent.',
+  'whale.audience.ask': 'Who is this objection really about?',
+  'whale.audience.human': '{whale}’s CMO leans in.',
+  'whale.audience.bot': '{whale}’s SEO lead joins the call.',
+  'whale.audience.agent': '{whale}’s head of AI joins the call.',
+  'whale.audience.right': 'Right: you answer as {icon} {form}.',
+  'whale.audience.wrong': 'This one is about {icon} {form}s. Switching form.',
+  'journal.title': '📓 Field journal',
+  'journal.note': 'Every myth you bust, tip you hear and play you learn becomes a card. Read it before your next customer call.',
+  'journal.empty': 'Bust a myth, hear a tip from the Oracle or learn a play to fill your journal.',
+  'journal.card': '📓 New journal card',
+  'streak.up': '🔥 {n} in a row: ×{mult} rewards',
+  'streak.lost': '💨 Streak lost',
+  'daily.name': '⭐ {name}',
+  'daily.title': '⭐ Daily myth busted!',
+  'daily.note': 'Today’s myth pays {arr} extra. A new one tomorrow.',
+  'daily.waiting': '⭐ Today’s daily myth is out on the trails: +{arr} ARR.',
+  newmyths: '🆕 {n} new myths are wandering the trails.',
 };
 const SCREEN_KEYS = ['village', 'grove', 'lake', 'bay'];
 
@@ -263,6 +386,14 @@ function money(v) {
 
 /* ---------- content parsing ---------- */
 
+// tagged cells: "Why: <explanation>", "For: bots"
+const WHY_TAG = /^(why|because)\s*:\s*/i;
+const FOR_TAG = /^(for|audience)\s*:\s*/i;
+function takeTag(list, re) {
+  const at = list.findIndex((t) => re.test(t));
+  return at >= 0 ? list.splice(at, 1)[0].replace(re, '').trim() : '';
+}
+
 const cellText = (cell) => (cell ? cell.textContent.replace(/\s+/g, ' ').trim() : '');
 
 function isLinkOnly(cell) {
@@ -292,6 +423,8 @@ function parseContent(block) {
     resources: [],
     tips: [],
     myths: [],
+    bots: [],
+    agents: [],
   };
   [...block.children].forEach((row) => {
     const cells = [...row.children];
@@ -379,14 +512,30 @@ function parseContent(block) {
       case 'puzzle':
       case 'question':
       case 'quiz':
-      case 'objection':
-        if (texts.length >= 3) {
+      case 'objection': {
+        const parts = [...texts];
+        const why = takeTag(parts, WHY_TAG);
+        const audience = audienceOf(takeTag(parts, FOR_TAG));
+        if (parts.length >= 3) {
           const entry = {
-            prompt: texts[0], answer: texts[1], wrong: texts.slice(2), link,
+            prompt: parts[0], answer: parts[1], wrong: parts.slice(2), why, audience, link,
           };
           (key === 'objection' ? content.objections : content.puzzles).push(entry);
         }
         break;
+      }
+      case 'bot':
+      case 'crawler':
+      case 'agent': {
+        const parts = [...texts];
+        const why = takeTag(parts, WHY_TAG);
+        if (parts.length >= 3) {
+          (key === 'agent' ? content.agents : content.bots).push({
+            prompt: parts[0], answer: parts[1], wrong: parts.slice(2), why, link,
+          });
+        }
+        break;
+      }
       case 'shrine':
         content.shrine = { text: texts.join(' '), link };
         break;
@@ -403,11 +552,19 @@ function parseContent(block) {
       case 'myth':
       case 'claim': {
         const parts = [...texts];
+        const why = takeTag(parts, WHY_TAG);
+        const audience = audienceOf(takeTag(parts, FOR_TAG));
         const arrAt = parts.findIndex((t, idx) => idx > 1 && MONEY.test(t));
         const arr = arrAt >= 0 ? parseMoney(parts.splice(arrAt, 1)[0]) : 0;
         if (parts.length >= 3) {
           content.myths.push({
-            prompt: parts[0], answer: parts[1], wrong: parts.slice(2), arr: arr || MYTH_ARR, link,
+            prompt: parts[0],
+            answer: parts[1],
+            wrong: parts.slice(2),
+            arr: arr || MYTH_ARR,
+            why,
+            audience,
+            link,
           });
         }
         break;
@@ -463,6 +620,8 @@ function parseContent(block) {
     resources: content.resources,
     tips: content.tips.length ? content.tips : DEFAULT_CONTENT.tips,
     myths: content.myths.length ? content.myths : DEFAULT_CONTENT.myths,
+    bots: content.bots.length ? content.bots : DEFAULT_CONTENT.bots,
+    agents: content.agents.length ? content.agents : DEFAULT_CONTENT.agents,
   };
 }
 
@@ -567,6 +726,8 @@ function buildWorld() {
     pier: { x: 87, y: 8 },
     oracle: { x: 69, y: 4 }, // east shore of the lake
     duck: { x: 8, y: 11 }, // floating at the edge of the village pond
+    // structured-data stones, only visible in bot form (one per screen)
+    schema: [{ x: 6, y: 12 }, { x: 44, y: 7 }, { x: 59, y: 5 }, { x: 77, y: 10 }],
     signpost: { x: 3, y: ROWS - 2 },
   };
 }
@@ -797,6 +958,33 @@ const INK = '#1a1424';
 PALETTES.oracle = {
   h: '#3d3a3a', s: '#b9825f', e: '#1a1a2e', m: '#94603f', j: '#1f2433', w: '#fff', t: '#eb1000', p: '#1a1d29', b: '#111',
 };
+// the bot: a crawler with a green visor; the personal agent: a floating assistant
+PALETTES.bot = {
+  k: '#33434d', g: '#a7bac6', v: '#0b1a12', e: '#3ddc84', c: '#3ddc84', t: '#56616b',
+};
+PALETTES.agent = {
+  w: '#eef3ff', s: '#0b1640', e: '#7fd3ff', m: '#7fd3ff', b: '#2f6fd6',
+};
+const mirror = (half) => half + [...half].reverse().join('');
+const BOT_DOWN = ['.......e', '.......k', '...kkkkk', '...kgggg', '...kgvvv', '...kgvev', '...kgvvv',
+  '...kgggg', '....kkkk', '..kkgggg', '.kgkgggg', '.kgkggcc', '.kgkgggg', '..k.kkkk'].map(mirror);
+const BOT_ROWS = {
+  down: BOT_DOWN,
+  up: BOT_DOWN.map((r, i) => (i >= 4 && i <= 6 ? mirror('...kgggg') : r.replace(/c/g, 'g'))),
+  side: BOT_DOWN.map((r, i) => (i === 5 ? r.replace('vevvev', 'vvvvee') : r)),
+};
+const BOT_LEGS = {
+  stand: ['....kttt', '....kttt'].map(mirror),
+  a: ['....ktkt', '....kttt'].map(mirror),
+  b: ['....kktk', '....kttt'].map(mirror),
+};
+const AGENT_DOWN = ['........', '....wwww', '...wwwww', '..wwssss', '..wsssss', '..wssess',
+  '..wsssss', '..wssssm', '..wwssss', '...wwwww', '.....bbb', '....bwww', '...bwwww',
+  '....bwww', '.....www', '......ww'].map(mirror);
+const AGENT_ROWS = {
+  down: AGENT_DOWN,
+  up: AGENT_DOWN.map((r) => r.replace(/[sem]/g, 'w')),
+};
 const spriteCache = new Map();
 // pixel sprite with a 1px dark outline (the canvas is 2px larger than the art)
 function sprite(key, rows, palette) {
@@ -881,6 +1069,49 @@ function drawPerson(g, x, y, dir, step, palKey, style = 'short') {
   } else {
     g.drawImage(img, x - 1, y - 1);
   }
+}
+
+function drawFlipped(g, img, x, y, flip) {
+  if (flip) {
+    g.save();
+    g.translate(x + TILE + 1, y - 1);
+    g.scale(-1, 1);
+    g.drawImage(img, 0, 0);
+    g.restore();
+  } else {
+    g.drawImage(img, x - 1, y - 1);
+  }
+}
+
+function drawBot(g, x, y, dir, step, t) {
+  const facing = dir === 'left' || dir === 'right' ? 'side' : dir;
+  const rows = [...BOT_ROWS[facing], ...BOT_LEGS[step]];
+  rect(g, 'rgba(0,0,0,0.25)', x + 3, y + 15, 10, 2);
+  drawFlipped(g, sprite(`bot-${facing}-${step}`, rows, PALETTES.bot), x, y, dir === 'left');
+  if (Math.floor(t / 400) % 2) rect(g, '#d6ffe6', x + 7, y, 2, 1); // antenna blinks
+  const [dx, dy] = DIRS[dir]; // scanning ahead
+  glow(g, x + 8 + dx * 14, y + 9 + dy * 14, 8, '#1f7a46', 0.55 + 0.3 * Math.sin(t / 120));
+}
+
+function drawAgent(g, x, y, dir, t) {
+  const facing = dir === 'up' ? 'up' : 'down';
+  const bob = Math.round(Math.sin(t / 260) * 1.5);
+  rect(g, 'rgba(0,0,0,0.22)', x + 5, y + 15, 6, 1);
+  glow(g, x + 8, y + 14, 9, '#1a3a8a', 0.8);
+  drawFlipped(g, sprite(`agent-${facing}`, AGENT_ROWS[facing], PALETTES.agent), x, y - 2 + bob, dir === 'left');
+  const a = t / 380; // a spark orbits the agent
+  rect(g, '#bfe8ff', x + 8 + Math.round(Math.cos(a) * 9), y + 6 + bob + Math.round(Math.sin(a) * 3), 1, 1);
+}
+
+// a structured-data stone with a glowing </>
+function drawSchema(g, x, y, t) {
+  const b = Math.round(Math.sin(t / 300 + x));
+  const c = '#3ddc84';
+  glow(g, x + 8, y + 9, 12, '#0f5a2c', 0.9);
+  rect(g, INK, x + 2, y + 5 + b, 12, 8);
+  rect(g, '#123524', x + 3, y + 6 + b, 10, 6);
+  [[5, 8], [4, 9], [5, 10], [8, 7], [8, 8], [7, 9], [7, 10], [10, 8], [11, 9], [10, 10]]
+    .forEach(([px, py]) => rect(g, c, x + px, y + py + b, 1, 1));
 }
 
 // palette for a player's avatar at a given look tier
@@ -1647,16 +1878,19 @@ function drawGlasses(g, x, y) {
   frame.forEach(([gx, gy, w, h]) => rect(g, '#14141c', x + gx, y + gy, w, h));
 }
 
-// a little thought bubble with a "?" above a skeptic
-function drawBubble(g, x, y) {
+// a little thought bubble with a "?" above a skeptic (coloured by who the myth is about)
+function drawBubble(g, x, y, mark = '#e63946', bg = '#fff') {
   rect(g, INK, x, y, 7, 7);
-  rect(g, '#fff', x + 1, y + 1, 5, 5);
+  rect(g, bg, x + 1, y + 1, 5, 5);
   rect(g, INK, x + 1, y + 7, 2, 1);
-  rect(g, '#e63946', x + 2, y + 2, 3, 1);
-  rect(g, '#e63946', x + 4, y + 3, 1, 1);
-  rect(g, '#e63946', x + 3, y + 4, 1, 1);
-  rect(g, '#e63946', x + 3, y + 5, 1, 1);
+  rect(g, mark, x + 2, y + 2, 3, 1);
+  rect(g, mark, x + 4, y + 3, 1, 1);
+  rect(g, mark, x + 3, y + 4, 1, 1);
+  rect(g, mark, x + 3, y + 5, 1, 1);
 }
+const BUBBLE = {
+  human: ['#e63946', '#fff'], bot: ['#1b7a45', '#c9ffe0'], agent: ['#1d4fb8', '#d6ecff'],
+};
 
 // filled pixel ellipse
 function oval(g, color, cx, cy, rx, ry) {
@@ -2075,6 +2309,11 @@ export default async function decorate(block) {
     return e ? { ...e, arr: e.arr || Math.round(c.arr * 0.25) } : null;
   });
   const { whale } = content;
+  // learning this play unlocks switching between human, bot and personal agent
+  const audiencePlay = plays.findIndex((p) => p.name.toLowerCase()
+    .includes(T('forms.play').toLowerCase()));
+  const audienceGate = numGates - 1; // the last rune gate wants all three audiences
+  const formName = (f) => T(`form.${f}`);
   const mythArr = content.myths.reduce((sum, m) => sum + m.arr, 0);
   const arrGoal = whale.arr + mythArr
     + customers.reduce((sum, c, ci) => sum + c.arr + (expansions[ci]?.arr || 0), 0);
@@ -2113,6 +2352,19 @@ export default async function decorate(block) {
     layout: 2, // the map version the saved position belongs to
     tipsHeard: [], // Oracle tips heard
     mythsWon: {}, // myth index -> ARR earned by busting it
+    form: 'human', // 'human', 'bot' or 'agent'
+    formsIntro: false, // the switch-forms intro was shown
+    crawled: {}, // customer index -> ARR added by the bot task
+    served: {}, // customer index -> ARR added by the agent task
+    triples: {}, // customer index -> triple-play bonus
+    taskTries: {}, // 'b3' / 'a3' -> failed tries (each try asks the next question)
+    signs: [], // structured-data stones found in bot form
+    runeForms: [], // forms that have touched the audience gate
+    streak: 0, // right answers in a row
+    bestStreak: 0,
+    dailyDone: '', // the day the daily myth was last busted
+    dailyArr: 0, // ARR from daily myths
+    mythsSeen: [], // myth claims already announced
   });
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
@@ -2134,6 +2386,12 @@ export default async function decorate(block) {
   state.whaleArr = state.whaleArr || 0;
   state.tipsHeard = state.tipsHeard || [];
   state.mythsWon = state.mythsWon || {};
+  ['crawled', 'served', 'triples', 'taskTries'].forEach((k) => { state[k] = state[k] || {}; });
+  ['signs', 'runeForms', 'mythsSeen'].forEach((k) => { state[k] = state[k] || []; });
+  if (!FORMS.includes(state.form)) state.form = 'human';
+  state.streak = state.streak || 0;
+  state.bestStreak = state.bestStreak || 0;
+  state.dailyArr = state.dailyArr || 0;
   // what a customer's deal is still worth after failed pitches
   const PITCH_PENALTY = 0.25;
   const REFERENCE_BONUS = 1.15;
@@ -2146,7 +2404,38 @@ export default async function decorate(block) {
     && state.deals.includes(ci) && !(ci in state.expWon);
   const sum = (obj) => Object.values(obj).reduce((a, v) => a + v, 0);
   const arrClosed = () => sum(state.arrWon) + sum(state.expWon) + state.whaleArr
-    + sum(state.mythsWon);
+    + sum(state.mythsWon) + sum(state.crawled) + sum(state.served) + sum(state.triples)
+    + state.dailyArr;
+  // three audiences
+  const formsUnlocked = () => (audiencePlay >= 0
+    ? state.plays.includes(audiencePlay) : state.deals.length > 0);
+  const lockedText = () => {
+    if (audiencePlay < 0) return T('forms.locked.deal');
+    const p = plays[audiencePlay];
+    return T('forms.locked', { play: p.name, teacher: npcs[p.teacher]?.name || 'an expert' });
+  };
+  const taskOpen = (kind, ci) => kind !== 'human' && formsUnlocked() && state.deals.includes(ci)
+    && !(ci in (kind === 'bot' ? state.crawled : state.served));
+  // learning: streaks, the daily myth
+  const streakMult = () => (STREAK_STEPS.find(([n]) => state.streak >= n) || [0, 1])[1];
+  const dayNumber = () => {
+    const d = new Date();
+    return Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000);
+  };
+  const today = () => String(dayNumber());
+  const mythOk = (i) => aud(content.myths[i]) === 'human' || formsUnlocked();
+  const dailyMyth = () => {
+    const pool = content.myths.map((_, i) => i).filter(mythOk);
+    return pool.length ? pool[hash(dayNumber(), 7) % pool.length] : -1;
+  };
+  const dailyOpen = () => dailyMyth() >= 0 && state.dailyDone !== today();
+  const explain = (q) => [
+    `Best answer: ${q.answer}`,
+    q.why ? T('oracle.explain', { oracle: T('oracle.name'), why: q.why }) : '',
+  ];
+  const botFacts = () => T('bot.signs').split('\n').map((f) => f.trim()).filter(Boolean);
+  const journalCount = () => Object.keys(state.mythsWon).length + state.tipsHeard.length
+    + state.plays.length + state.signs.length;
   const WHALE_PENALTY = 0.1;
   const whaleValue = () => Math.round(
     whale.arr * Math.max(0.5, 1 - WHALE_PENALTY * state.whaleMisses),
@@ -2169,7 +2458,8 @@ export default async function decorate(block) {
   let walkerSeq = 0;
   const walkerAt = (x, y) => walkers.findIndex((w) => !w.leaving
     && ((w.x === x && w.y === y) || (w.moving && w.tx === x && w.ty === y)));
-  const pendingMyths = () => content.myths.map((_, i) => i).filter((i) => !(i in state.mythsWon));
+  const pendingMyths = () => content.myths.map((_, i) => i)
+    .filter((i) => !(i in state.mythsWon) && mythOk(i));
   const held = [];
   let busy = true;
   let bossHitAt = -1000;
@@ -2205,6 +2495,7 @@ export default async function decorate(block) {
   const dealEl = el('span', { class: 'questline-stat' });
   const arrEl = el('span', { class: 'questline-arrbox' });
   const gateEl = el('span', { class: 'questline-stat' });
+  const streakEl = el('span', { class: 'questline-stat questline-streak', hidden: true });
   const objectiveEl = el('p', { class: 'questline-objective' });
   const hintEl = el('p', { class: 'questline-hint', 'aria-live': 'polite' });
   const overlay = el('div', { class: 'questline-overlay', hidden: true });
@@ -2360,20 +2651,39 @@ export default async function decorate(block) {
   const storyBtn = el('button', { type: 'button', class: 'questline-tool', text: 'Story mode' });
   const resetBtn = el('button', { type: 'button', class: 'questline-tool', text: 'Restart' });
   const avatarBtn = el('button', { type: 'button', class: 'questline-tool', text: 'Edit avatar' });
+  const journalBtn = el('button', { type: 'button', class: 'questline-tool', text: '📓 Journal' });
+  // the form switch, shown once the three audiences are unlocked
+  const formBtns = FORMS.map((f, i) => el(
+    'button',
+    {
+      type: 'button', class: `questline-form questline-form-${f}`, 'aria-pressed': 'false', 'data-form': f,
+    },
+    el('span', { class: 'questline-key', text: `${i + 1}` }),
+    `${FORM_ICON[f]} ${formName(f)}`,
+  ));
+  const formsEl = el(
+    'div',
+    {
+      class: 'questline-forms', role: 'group', 'aria-label': 'Switch form', hidden: true,
+    },
+    el('span', { class: 'questline-label', text: 'Form' }),
+    formBtns,
+  );
 
   block.replaceChildren(
     el(
       'div',
       { class: 'questline-hud' },
       el('p', { class: 'questline-title', text: content.title }),
-      el('div', { class: 'questline-stats' }, levelEl, customers.length ? arrEl : null, insightEl, customers.length ? dealEl : null, gateEl),
+      el('div', { class: 'questline-stats' }, levelEl, customers.length ? arrEl : null, insightEl, customers.length ? dealEl : null, gateEl, streakEl),
     ),
     skillsEl,
     objectiveEl,
+    formsEl,
     screen,
     hintEl,
     pad,
-    el('div', { class: 'questline-toolbar' }, avatarBtn, storyBtn, resetBtn),
+    el('div', { class: 'questline-toolbar' }, journalBtn, avatarBtn, storyBtn, resetBtn),
   );
 
   const dialog = createDialog(block, overlay);
@@ -2418,11 +2728,19 @@ export default async function decorate(block) {
     arrEl.setAttribute('aria-label', `ARR closed ${money(closed)}`);
     signTags.forEach((tag, i) => {
       const won = state.deals.includes(i);
-      tag.textContent = won
-        ? `✓ ${money((state.arrWon[i] || 0) + (state.expWon[i] || 0))}`
-        : money(dealValue(i));
+      const extra = (state.expWon[i] || 0) + (state.crawled[i] || 0) + (state.served[i] || 0)
+        + (state.triples[i] || 0);
+      tag.textContent = won ? `✓ ${money((state.arrWon[i] || 0) + extra)}` : money(dealValue(i));
       tag.classList.toggle('lowered', !won && !!state.pitchMisses[i]);
+      signs[i].classList.toggle('triple', i in state.triples);
     });
+    streakEl.hidden = !state.streak;
+    streakEl.textContent = `🔥 ${state.streak}${streakMult() > 1 ? ` ×${streakMult()}` : ''}`;
+    streakEl.setAttribute('aria-label', `${state.streak} right answers in a row`);
+    formsEl.hidden = !formsUnlocked();
+    formBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.form === state.form)));
+    block.dataset.form = state.form;
+    journalBtn.textContent = `📓 Journal (${journalCount()})`;
     gateEl.textContent = `Gates ${state.gates.slice(0, numGates).filter(Boolean).length}/${numGates}`;
     signs.forEach((s, i) => s.classList.toggle('won', state.deals.includes(i)));
     gateLabels.forEach((label, i) => {
@@ -2447,6 +2765,9 @@ export default async function decorate(block) {
     if (openExp) side.push(`${openExp} expansion${openExp === 1 ? '' : 's'} (blue +)`);
     const myths = pendingMyths().length;
     if (myths) side.push(`${myths} myth${myths === 1 ? '' : 's'} to bust (wandering skeptics)`);
+    if (dailyOpen()) side.push('⭐ the daily myth');
+    const sites = customers.filter((_, ci) => taskOpen('bot', ci) || taskOpen('agent', ci)).length;
+    if (sites) side.push(`${sites} site${sites === 1 ? '' : 's'} for 🤖 bot / 🦾 agent`);
     if (lettersHeld().length) side.push(`${lettersHeld().length} reference letter${lettersHeld().length === 1 ? '' : 's'} to share`);
     objectiveEl.textContent = side.length ? `${objective} · Side quests: ${side.join(', ')}` : objective;
   }
@@ -2588,6 +2909,40 @@ export default async function decorate(block) {
     updateHud();
     save();
   }
+  // every answer counts towards the streak: 3 in a row pays ×1.5, 5 in a row ×2
+  function answered(ok) {
+    state.history.push(ok);
+    if (ok) {
+      state.streak += 1;
+      state.bestStreak = Math.max(state.bestStreak, state.streak);
+      if (STREAK_STEPS.some(([n]) => n === state.streak)) {
+        toast(T('streak.up', { n: state.streak, mult: streakMult() }), 'level');
+      }
+    } else {
+      if (state.streak >= STREAK_STEPS[STREAK_STEPS.length - 1][0]) toast(T('streak.lost'), 'loss');
+      state.streak = 0;
+    }
+    updateHud();
+    save();
+  }
+  const card = () => {
+    toast(T('journal.card'), 'skill');
+    updateHud();
+  };
+
+  function setForm(f, { quiet = false } = {}) {
+    if (!FORMS.includes(f) || f === state.form) return;
+    if (!formsUnlocked()) {
+      toast(lockedText(), 'level');
+      return;
+    }
+    state.form = f;
+    burst(state.x, state.y, FORM_COLOR[f], 24);
+    if (!quiet) toast(`${FORM_ICON[f]} ${formName(f)}: ${T(`form.${f}.about`)}`, 'skill');
+    updateHud();
+    save();
+  }
+
   // full XP on the first try, half after the answer has been revealed
   const reward = (base, id) => (state.missed.includes(id) ? Math.ceil(base / 2) : base);
   const miss = (id) => {
@@ -2755,9 +3110,26 @@ export default async function decorate(block) {
     const ok = await dialog.open({
       speaker, lines, tone: speaker.startsWith(whale.name) ? 'boss' : null, choices: options,
     });
-    state.history.push(ok);
-    save();
+    answered(ok);
     return ok;
+  }
+
+  async function maybeUnlockForms() {
+    if (state.formsIntro || !formsUnlocked()) return;
+    state.formsIntro = true;
+    save();
+    updateHud();
+    burst(state.x, state.y, FORM_COLOR.bot, 20);
+    await dialog.open({
+      tone: 'play',
+      title: T('forms.unlock.title'),
+      lines: [
+        T('forms.unlock'),
+        ...FORMS.map((f) => `${FORM_ICON[f]} ${formName(f)}: ${T(`form.${f}.about`)}`),
+      ],
+      note: T('forms.keys'),
+      choices: next('Let’s go'),
+    });
   }
 
   async function talkTo(i) {
@@ -2802,6 +3174,7 @@ export default async function decorate(block) {
       toast(`📘 New play: ${play.name}`, 'skill');
       gain(XP.play, play.name);
     }
+    await maybeUnlockForms();
   }
 
   // side quest: share a won customer's story with a prospect who has the same problem
@@ -2875,7 +3248,7 @@ export default async function decorate(block) {
         ...ex.wrong.map((w) => ({ label: w, value: false, numbered: true })),
       ]),
     });
-    state.history.push(ok);
+    answered(ok);
     if (ok) {
       state.expWon[ci] = value;
       burst(c.house.x + 0.5, c.house.y + 1, '#2f6fd6', 26);
@@ -2907,11 +3280,82 @@ export default async function decorate(block) {
     return false;
   }
 
+  // the bot crawls a won customer's site, the personal agent completes a buyer's task there
+  async function customerTask(kind, ci) {
+    const c = customers[ci];
+    const store = kind === 'bot' ? state.crawled : state.served;
+    const speaker = `${FORM_ICON[kind]} ${formName(kind)}`;
+    if (!state.deals.includes(ci)) {
+      await dialog.open({
+        tone: 'bad', speaker, lines: [T(`${kind}.blocked`, { company: c.company })], choices: next('OK'),
+      });
+      return false;
+    }
+    if (ci in store) {
+      await dialog.open({
+        tone: 'good', speaker, lines: [T(`${kind}.done`, { company: c.company })], choices: next('OK'),
+      });
+      return true;
+    }
+    const pool = kind === 'bot' ? content.bots : content.agents;
+    const key = `${kind[0]}${ci}`;
+    const base = pool[(ci + (state.taskTries[key] || 0)) % pool.length];
+    const q = { ...base, prompt: base.prompt.replace(/\{company\}/g, c.company) };
+    const ok = await ask(q, T(`${kind}.title`, { company: c.company }));
+    if (!ok) {
+      miss(key);
+      state.taskTries[key] = (state.taskTries[key] || 0) + 1;
+      save();
+      await dialog.open({
+        tone: 'bad',
+        title: T(`${kind}.failed`, { company: c.company }),
+        lines: explain(q),
+        note: `Come back as ${FORM_ICON[kind]} to try again.`,
+        link: q.link,
+        choices: next('Continue'),
+      });
+      return false;
+    }
+    const value = Math.round((state.arrWon[ci] || c.arr) * TASK_SHARE[kind] * streakMult());
+    store[ci] = value;
+    const h = c.house;
+    burst(h.x + 0.5, h.y + 1, FORM_COLOR[kind], 26);
+    toast(`${FORM_ICON[kind]} +${money(value)} ARR`, 'arr');
+    gain(reward(XP.task, key), `${kind === 'bot' ? 'crawled' : 'agent task at'} ${c.company}`);
+    await dialog.open({
+      tone: 'good',
+      speaker,
+      title: T(`${kind}.title`, { company: c.company }),
+      lines: [T(`${kind}.won`, { company: c.company }), `💰 +${money(value)} ARR · ${money(arrClosed())} closed`],
+      note: q.why || null,
+      link: q.link,
+      choices: next('Onward'),
+    });
+    if (ci in state.crawled && ci in state.served && !(ci in state.triples)) {
+      const bonus = Math.round((state.arrWon[ci] || c.arr) * TASK_SHARE.triple);
+      state.triples[ci] = bonus;
+      burst(h.x + 0.5, h.y + 1, '#f4d35e', 36);
+      toast(`🧑🤖🦾 +${money(bonus)} ARR`, 'arr');
+      gain(XP.triple, `triple play: ${c.company}`);
+      syncAvatar({ quiet: true });
+      await dialog.open({
+        tone: 'good',
+        title: T('triple.title', { company: c.company }),
+        lines: [T('triple.text', { company: c.company }), `💰 +${money(bonus)} ARR bonus`],
+        choices: next('Onward'),
+      });
+    }
+    updateHud();
+    save();
+    return true;
+  }
+
   async function visitCustomer(ci) {
     const c = customers[ci];
     const who = c.contact || c.company;
     const speaker = c.contact ? `${c.contact} · ${c.company}` : c.company;
     const id = `c${ci}`;
+    if (state.form !== 'human') return customerTask(state.form, ci);
     if (state.deals.includes(ci)) {
       if (expansionOpen(ci)) return pitchExpansion(ci);
       await dialog.open({
@@ -2960,7 +3404,7 @@ export default async function decorate(block) {
       choices: shuffle(options),
     });
     const ok = same(pick, c.best);
-    state.history.push(ok);
+    answered(ok);
     const best = playFor(c);
     if (ok) {
       state.deals.push(ci);
@@ -2986,6 +3430,7 @@ export default async function decorate(block) {
       });
       if (earned.length) toast(`📜 Reference letter: ${c.company}`, 'skill');
       updateHud();
+      await maybeUnlockForms();
       return true;
     }
     miss(id);
@@ -3010,7 +3455,27 @@ export default async function decorate(block) {
     return false;
   }
 
-  async function challengeGate(gi, { skipIntro = false } = {}) {
+  async function challengeGate(gi, { skipIntro = false, story = false } = {}) {
+    if (gi === audienceGate && formsUnlocked()) {
+      // the last rune wants to be touched by all three audiences
+      if (story) state.runeForms = [...FORMS];
+      if (!state.runeForms.includes(state.form)) {
+        state.runeForms.push(state.form);
+        burst(world.gates[gi].x, world.gates[gi].y, FORM_COLOR[state.form], 20);
+        save();
+      }
+      if (FORMS.some((f) => !state.runeForms.includes(f))) {
+        await dialog.open({
+          speaker: T('gate.name', { n: gi + 1 }),
+          lines: [
+            T('gate.audience'),
+            FORMS.map((f) => `${FORM_ICON[f]} ${state.runeForms.includes(f) ? '✓' : '…'}`).join('   '),
+          ],
+          choices: next('OK'),
+        });
+        return false;
+      }
+    }
     const pending = gateQuestions[gi].filter((idx) => !state.solved.includes(idx));
     if (!skipIntro) {
       const go = await dialog.open({
@@ -3029,7 +3494,7 @@ export default async function decorate(block) {
         await dialog.open({
           tone: 'bad',
           title: 'Not quite',
-          lines: [`Correct answer: ${q.answer}`],
+          lines: explain(q),
           note: 'No XP this time. Read the rune again when you are ready.',
           link: q.link,
           choices: next('Continue'),
@@ -3037,7 +3502,7 @@ export default async function decorate(block) {
         return false;
       }
       state.solved.push(pending[k]);
-      gain(reward(XP.gate, id), 'rune answered');
+      gain(Math.round(reward(XP.gate, id) * streakMult()), 'rune answered');
       if (k < pending.length - 1) {
         await dialog.open({ tone: 'good', title: 'Correct!', choices: next('Continue') });
       }
@@ -3077,6 +3542,9 @@ export default async function decorate(block) {
           summary,
           customers.length ? `Deals won: ${state.deals.length}/${customers.length}` : '',
           customers.length ? `💰 ARR closed: ${money(arrClosed())}` : '',
+          formsUnlocked() && customers.length
+            ? `🧑🤖🦾 Triple plays: ${Object.keys(state.triples).length}/${customers.length} · 🔥 Best streak: ${state.bestStreak}`
+            : '',
           references.length || expansions.some(Boolean)
             ? `Side quests: ${state.refsDelivered.length}/${references.length} references · ${Object.keys(state.expWon).length}/${expansions.filter(Boolean).length} expansions · ${Object.keys(state.mythsWon).length}/${content.myths.length} myths`
             : '',
@@ -3138,11 +3606,29 @@ export default async function decorate(block) {
       });
       if (!go) return false;
     }
-    let queue = content.objections.map((_, i) => i).filter((i) => !state.bossSolved.includes(i));
+    // with the three audiences unlocked the objections come in waves: humans, bots, agents
+    const waves = formsUnlocked();
+    const order = { human: 0, bot: 1, agent: 2 };
+    const rank = (i) => (waves ? order[aud(content.objections[i])] : 0);
+    let queue = content.objections.map((_, i) => i).filter((i) => !state.bossSolved.includes(i))
+      .sort((a, b) => rank(a) - rank(b));
     while (queue.length) {
       const idx = queue[0];
       const q = content.objections[idx];
       const id = `o${idx}`;
+      const who = aud(q);
+      if (waves && state.form !== who) {
+        const pickForm = await dialog.open({
+          tone: 'boss',
+          speaker: whaleSpeaker(),
+          lines: [T(`whale.audience.${who}`, { whale: whale.name }), `“${q.prompt}”`, T('whale.audience.ask')],
+          choices: FORMS.map((f) => ({ label: `${FORM_ICON[f]} Answer as ${formName(f)}`, value: f, numbered: true })),
+        });
+        const right = pickForm === who;
+        if (!right) answered(false);
+        setForm(who, { quiet: true });
+        toast(T(right ? 'whale.audience.right' : 'whale.audience.wrong', { icon: FORM_ICON[who], form: formName(who) }), right ? 'skill' : 'loss');
+      }
       const ok = await ask(q, `${whale.name} objects`, [`“${q.prompt}”`, 'Pick your best response:']);
       if (ok) {
         queue = queue.slice(1);
@@ -3150,7 +3636,7 @@ export default async function decorate(block) {
         state.bossHp = maxHp - state.bossSolved.length;
         bossHitAt = performance.now();
         burst(world.whale.x + 2, world.whale.y + 1.5, '#ffffff', 16);
-        gain(reward(XP.objection, id), 'objection countered');
+        gain(Math.round(reward(XP.objection, id) * streakMult()), 'objection countered');
         if (state.bossHp > 0) {
           await dialog.open({
             tone: 'good', title: T('whale.hit.title'), lines: [T('whale.hit', { whale: whale.name, left: plural(state.bossHp, 'objection') })], choices: next('Keep going'),
@@ -3165,7 +3651,10 @@ export default async function decorate(block) {
         const goOn = await dialog.open({
           tone: 'bad',
           title: T('whale.miss.title'),
-          lines: [T('whale.miss', { whale: whale.name, answer: q.answer })],
+          lines: [
+            T('whale.miss', { whale: whale.name, answer: q.answer }),
+            q.why ? T('oracle.explain', { oracle: T('oracle.name'), why: q.why }) : '',
+          ],
           note: `The deal is now worth ${money(whaleValue())}. The objection will come back.`,
           link: q.link,
           choices: story ? next('Continue') : [
@@ -3205,6 +3694,7 @@ export default async function decorate(block) {
     if (first) {
       state.tipsHeard.push(i);
       gain(XP.tip, 'wisdom from the Oracle');
+      card();
       save();
     }
     burst(world.oracle.x, world.oracle.y - 0.5, '#c9b6ff', 14);
@@ -3248,16 +3738,33 @@ export default async function decorate(block) {
     try {
       const ok = await ask(m, w.name, [`“${m.prompt}”`, T('myth.ask')]);
       if (ok) {
-        state.mythsWon[w.myth] = m.arr;
-        burst(w.x, w.y, '#3ddc84', 24);
-        toast(`💡 +${money(m.arr)} ARR`, 'arr');
-        gain(reward(XP.myth, `m${w.myth}`), 'myth busted');
+        const mult = streakMult();
+        let value = 0;
+        const firstBust = !(w.myth in state.mythsWon);
+        if (firstBust) {
+          state.mythsWon[w.myth] = Math.round(m.arr * mult);
+          value += state.mythsWon[w.myth];
+        }
+        if (w.daily) {
+          const bonus = Math.round(m.arr * mult);
+          state.dailyDone = today();
+          state.dailyArr += bonus;
+          value += bonus;
+          gain(XP.daily, 'daily myth');
+        }
+        burst(w.x, w.y, w.daily ? '#f4d35e' : '#3ddc84', w.daily ? 36 : 24);
+        toast(`💡 +${money(value)} ARR`, 'arr');
+        if (firstBust) {
+          gain(reward(Math.round(XP.myth * mult), `m${w.myth}`), 'myth busted');
+          card();
+        }
         updateHud();
         save();
         await dialog.open({
           tone: 'good',
-          title: T('myth.won.title'),
-          lines: [T('myth.won', { who: w.name }), `💰 +${money(m.arr)} ARR · ${money(arrClosed())} closed`],
+          title: T(w.daily ? 'daily.title' : 'myth.won.title'),
+          lines: [T('myth.won', { who: w.name }), `💰 +${money(value)} ARR · ${money(arrClosed())} closed`],
+          note: w.daily ? T('daily.note', { arr: money(Math.round(m.arr * mult)) }) : m.why || null,
           link: m.link,
           choices: next('Onward'),
         });
@@ -3266,7 +3773,7 @@ export default async function decorate(block) {
         await dialog.open({
           tone: 'bad',
           title: T('myth.lost.title'),
-          lines: [T('myth.lost', { who: w.name }), `Better answer: ${m.answer}`],
+          lines: [T('myth.lost', { who: w.name }), ...explain(m)],
           note: T('myth.lost.note'),
           link: m.link,
           choices: next('Continue'),
@@ -3329,7 +3836,9 @@ export default async function decorate(block) {
     content.tips.forEach((tip) => addLink(tip.link, T('oracle.name')));
     content.myths.forEach((m) => addLink(m.link, 'Myth'));
     const study = (list) => list.map((q) => ({
-      title: q.prompt, answer: q.answer, link: q.link,
+      title: q.prompt.replace(/\{company\}/g, 'a customer'),
+      answer: q.why ? `${q.answer}. ${q.why}` : q.answer,
+      link: q.link,
     }));
     return [
       { icon: '📜', title: 'Collateral', items: collateral },
@@ -3370,6 +3879,8 @@ export default async function decorate(block) {
       { icon: '🔮', title: 'Rune gates', items: study(content.puzzles) },
       { icon: '🛡', title: 'Objections', items: study(content.objections) },
       { icon: '💡', title: 'Myths', items: study(content.myths) },
+      { icon: '🤖', title: 'Bot', items: study(content.bots) },
+      { icon: '🦾', title: 'Agent', items: study(content.agents) },
       {
         icon: '🧙',
         title: 'Oracle tips',
@@ -3380,8 +3891,10 @@ export default async function decorate(block) {
     ].filter((sec) => sec.items.length);
   }
 
-  async function openLibrary() {
-    const sections = librarySections();
+  // a panel with tabs of cards: the library and the journal
+  function tabbedPanel({
+    title, note, sections, close, label,
+  }) {
     const body = el('div', { class: 'questline-lib-body', role: 'tabpanel', tabindex: '0' });
     const item = (it) => el(
       'article',
@@ -3424,21 +3937,106 @@ export default async function decorate(block) {
     });
     const panel = el(
       'div',
-      { class: 'questline-panel questline-panel-library', role: 'dialog', 'aria-label': 'Field readiness library' },
-      el('p', { class: 'questline-panel-title', text: '📚 Field readiness library' }),
-      el('p', { class: 'questline-note', text: 'Everything this realm teaches, in one place. Open the collateral, study the plays, peek at the answers.' }),
+      { class: 'questline-panel questline-panel-library', role: 'dialog', 'aria-label': label },
+      el('p', { class: 'questline-panel-title', text: title }),
+      el('p', { class: 'questline-note', text: note }),
       tablist,
       body,
       el('div', { class: 'questline-choices' }, el('button', {
-        type: 'button', class: 'questline-choice primary', 'data-close': '', text: 'Leave the library',
+        type: 'button', class: 'questline-choice primary', 'data-close': '', text: close,
       })),
     );
     if (sections.length) select(0);
+    return { panel, first: tabs[0] };
+  }
+
+  async function openLibrary() {
+    const { panel, first } = tabbedPanel({
+      title: '📚 Field readiness library',
+      note: 'Everything this realm teaches, in one place. Open the collateral, study the plays, peek at the answers.',
+      sections: librarySections(),
+      close: 'Leave the library',
+      label: 'Field readiness library',
+    });
     if (!state.visited.includes('library')) {
       state.visited.push('library');
       gain(XP.library, 'visited the library');
     }
-    await showPanel(panel, tabs[0]);
+    await showPanel(panel, first);
+  }
+
+  // the player's own cards: what they have busted, heard, learned and found
+  function journalSections() {
+    const facts = botFacts();
+    return [
+      {
+        icon: '💡',
+        title: 'Myths busted',
+        items: Object.keys(state.mythsWon).map(Number).filter((i) => content.myths[i]).map((i) => {
+          const m = content.myths[i];
+          return {
+            title: `“${m.prompt}”`,
+            meta: `${FORM_ICON[aud(m)]} ${formName(aud(m))} · +${money(state.mythsWon[i])} ARR`,
+            lines: [`✓ ${m.answer}`, m.why],
+            link: m.link,
+          };
+        }),
+      },
+      {
+        icon: '🧙',
+        title: 'Tips',
+        items: state.tipsHeard.filter((i) => content.tips[i])
+          .map((i) => ({ title: content.tips[i].text, link: content.tips[i].link })),
+      },
+      {
+        icon: '📘',
+        title: 'Plays',
+        items: state.plays.filter((pi) => plays[pi]).map((pi) => ({
+          title: plays[pi].name, lines: [plays[pi].description], link: plays[pi].link,
+        })),
+      },
+      {
+        icon: '</>',
+        title: 'Structured data',
+        items: state.signs.map((si) => ({ title: facts[si % facts.length] || '' })),
+      },
+      {
+        icon: '🧑🤖🦾',
+        title: 'Three audiences',
+        items: formsUnlocked() ? customers.map((c, ci) => (state.deals.includes(ci) ? {
+          title: c.company,
+          meta: `🧑 ✓ · 🤖 ${ci in state.crawled ? '✓' : '…'} · 🦾 ${ci in state.served ? '✓' : '…'}`,
+          lines: [ci in state.triples ? T('triple.text', { company: c.company }) : ''],
+        } : null)).filter(Boolean) : [],
+      },
+    ].filter((sec) => sec.items.length);
+  }
+  async function openJournal() {
+    const sections = journalSections();
+    const { panel, first } = tabbedPanel({
+      title: `${T('journal.title')} · ${journalCount()} cards`,
+      note: T('journal.note'),
+      sections: sections.length ? sections : [{ icon: '📓', title: 'Cards', items: [{ title: T('journal.empty') }] }],
+      close: 'Close the journal',
+      label: 'Field journal',
+    });
+    await showPanel(panel, first);
+  }
+
+  // stepping onto a structured-data stone in bot form
+  async function findSign(si) {
+    state.signs.push(si);
+    const facts = botFacts();
+    burst(world.schema[si].x, world.schema[si].y, FORM_COLOR.bot, 22);
+    gain(XP.sign, 'structured data found');
+    card();
+    await dialog.open({
+      speaker: `${FORM_ICON.bot} ${formName('bot')}`,
+      title: T('bot.sign.title'),
+      lines: [facts[si % facts.length] || ''],
+      note: `${state.signs.length}/${world.schema.length} found`,
+      choices: next('Indexed ✓'),
+    });
   }
 
   // sample data until the board reads the DA player sheet
@@ -3550,6 +4148,20 @@ export default async function decorate(block) {
     const target = facing();
     if (!target) return;
     lastTarget = targetId(target);
+    const f = state.form;
+    if (f !== 'human' && ['npc', 'oracle', 'duck'].includes(target.type)) {
+      toast(T('forms.nochat', { icon: FORM_ICON[f], form: formName(f) }), 'level');
+      bumpShut = lastTarget;
+      return;
+    }
+    if (target.type === 'walker') {
+      const w = walkers.find((k) => k.id === target.index);
+      if (w && w.audience !== f) {
+        toast(T('forms.wrongmyth', { who: w.name, form: formName(w.audience), icon: FORM_ICON[w.audience] }), 'level');
+        bumpShut = lastTarget;
+        return;
+      }
+    }
     if (target.type === 'npc') run(() => talkTo(target.index));
     else if (target.type === 'customer') run(() => visitCustomer(target.index));
     else if (target.type === 'gate') run(() => challengeGate(target.index));
@@ -3576,8 +4188,16 @@ export default async function decorate(block) {
       for (let ci = 0; ci < customers.length; ci += 1) {
         while (expansionOpen(ci)) await visitCustomer(ci);
       }
+      for (let k = 0; k < 2 && formsUnlocked(); k += 1) {
+        const kind = k ? 'agent' : 'bot';
+        for (let ci = 0; ci < customers.length; ci += 1) {
+          if (taskOpen(kind, ci)) setForm(kind, { quiet: true });
+          while (taskOpen(kind, ci)) await customerTask(kind, ci);
+        }
+      }
+      setForm('human', { quiet: true });
       for (let gi = 0; gi < numGates; gi += 1) {
-        while (!state.gates[gi]) await challengeGate(gi, { skipIntro: true });
+        while (!state.gates[gi]) await challengeGate(gi, { skipIntro: true, story: true });
       }
       while (!state.whaleArr) await pitchWhale({ skipIntro: state.bossHp < maxHp, story: true });
       state.x = world.pier.x;
@@ -3598,11 +4218,22 @@ export default async function decorate(block) {
   async function intro() {
     if (!avatar) await editAvatar({ first: true });
     const hasProgress = saved && (saved.talked?.length || saved.solved?.length || saved.won);
+    // announce myths added in DA since the last visit, and today's daily myth
+    const claims = content.myths.map((m) => m.prompt);
+    const newCount = hasProgress && state.mythsSeen.length
+      ? claims.filter((p) => !state.mythsSeen.includes(p)).length : 0;
+    state.mythsSeen = claims;
+    const daily = dailyMyth();
     const choice = await dialog.open({
       tone: 'intro',
       title: content.title,
-      lines: [`Welcome, ${avatar.name}!`, content.intro],
-      note: 'Move: arrow keys / WASD or the on-screen pad · Interact: walk into someone, or Space, Enter or A · Esc closes a conversation',
+      lines: [
+        `Welcome, ${avatar.name}!`,
+        content.intro,
+        newCount ? T('newmyths', { n: newCount }) : '',
+        hasProgress && dailyOpen() ? T('daily.waiting', { arr: money(content.myths[daily].arr) }) : '',
+      ],
+      note: `Move: arrow keys / WASD or the on-screen pad · Interact: walk into someone, or Space, Enter or A · Esc closes a conversation${formsUnlocked() ? ' · Forms: 1 2 3 · Journal: J' : ''}`,
       choices: [
         { label: hasProgress ? 'Continue quest' : 'Start quest', value: 'play', primary: true },
         { label: 'Story mode (no walking)', value: 'story' },
@@ -3610,9 +4241,15 @@ export default async function decorate(block) {
     });
     begin();
     if (choice === 'story') await storyMode();
+    else await maybeUnlockForms();
   }
 
   avatarBtn.addEventListener('click', () => run(() => editAvatar()));
+  journalBtn.addEventListener('click', () => run(openJournal));
+  formBtns.forEach((b) => b.addEventListener('click', () => {
+    if (!busy) setForm(b.dataset.form);
+    stage.focus({ preventScroll: true });
+  }));
   storyBtn.addEventListener('click', () => run(async () => { begin(); await storyMode(); }));
   resetBtn.addEventListener('click', () => run(async () => {
     const yes = await dialog.open({
@@ -3692,6 +4329,15 @@ export default async function decorate(block) {
 
   block.addEventListener('keydown', (e) => {
     if (e.target.closest('.questline-overlay') || e.target.closest('button')) return;
+    const nextForm = e.code === 'KeyQ' ? FORMS[(FORMS.indexOf(state.form) + 1) % FORMS.length] : null;
+    const form = FORM_KEYS[e.code] || nextForm;
+    if (form || e.code === 'KeyJ') {
+      e.preventDefault();
+      if (busy || e.repeat) return;
+      if (form) setForm(form);
+      else run(openJournal);
+      return;
+    }
     const dir = KEYMAP[e.code];
     if (dir) {
       e.preventDefault();
@@ -3791,7 +4437,13 @@ export default async function decorate(block) {
   function spawnWalker() {
     const taken = walkers.map((w) => w.myth);
     const myths = pendingMyths().filter((i) => !taken.includes(i));
-    if (!myths.length) return;
+    const daily = dailyOpen() && !walkers.some((w) => w.daily) ? dailyMyth() : -1;
+    const isDaily = daily >= 0 && !taken.includes(daily);
+    if (!isDaily && !myths.length) return;
+    // myths the player got wrong come back more often, until they are busted
+    const missed = myths.filter((i) => state.missed.includes(`m${i}`));
+    const pool = missed.length && Math.random() < 0.6 ? missed : myths;
+    const myth = isDaily ? daily : pool[rand(pool.length)];
     const scr = screenOf(state.x);
     const probe = { screen: scr };
     const spots = [];
@@ -3804,6 +4456,7 @@ export default async function decorate(block) {
     if (!spots.length) return;
     const spot = spots[rand(spots.length)];
     const names = skepticNames().filter((n) => !walkers.some((w) => w.name === n));
+    const who = names.length ? names[rand(names.length)] : 'A skeptic';
     const look = rand(1000);
     walkerSeq += 1;
     walkers.push({
@@ -3820,8 +4473,10 @@ export default async function decorate(block) {
       pause: 0.8,
       steps: 10 + rand(16),
       screen: scr,
-      myth: myths[rand(myths.length)],
-      name: names.length ? names[rand(names.length)] : 'A skeptic',
+      myth,
+      daily: isDaily,
+      audience: aud(content.myths[myth]),
+      name: isDaily ? T('daily.name', { name: who }) : who,
       pal: `npc${look % 5}`,
       hair: NPC_HAIR[look % NPC_HAIR.length],
     });
@@ -3877,19 +4532,23 @@ export default async function decorate(block) {
     if (walkerTimer <= 0) {
       walkerTimer = 3 + Math.random() * 5;
       const active = walkers.filter((w) => !w.leaving).length;
-      if (active < Math.min(2, pendingMyths().length)) spawnWalker();
+      const daily = dailyOpen() && !walkers.some((w) => w.daily) ? 1 : 0;
+      if (active < Math.min(2, pendingMyths().length + daily)) spawnWalker();
     }
   }
 
   function update(dt) {
     if (motion.moving) {
-      motion.prog += dt * SPEED;
+      motion.prog += dt * SPEED * FORM_SPEED[state.form];
       if (motion.prog >= 1) {
         motion.moving = false;
         motion.prog = 0;
         state.x = motion.tx;
         state.y = motion.ty;
         save();
+        const si = state.area === 'realm' && state.form === 'bot'
+          ? world.schema.findIndex((p) => p.x === state.x && p.y === state.y) : -1;
+        if (si >= 0 && !state.signs.includes(si)) run(() => findSign(si));
       }
     }
     if (held.length) tryStep(held[held.length - 1]);
@@ -3977,11 +4636,83 @@ export default async function decorate(block) {
     return {
       y: py,
       draw: () => {
-        const li = lookIndex(levelOf(state.xp));
-        const look = avatar || DEFAULT_AVATAR;
-        drawPlayer(g, Math.round(px), Math.round(py), state.dir, step, li, t, look);
+        const x = Math.round(px);
+        const y = Math.round(py);
+        if (state.form === 'bot') drawBot(g, x, y, state.dir, step, t);
+        else if (state.form === 'agent') drawAgent(g, x, y, state.dir, t);
+        else {
+          const li = lookIndex(levelOf(state.xp));
+          drawPlayer(g, x, y, state.dir, step, li, t, avatar || DEFAULT_AVATAR);
+        }
       },
     };
+  }
+
+  // bot and agent see the world through their own filter
+  let formShades = null;
+  function buildFormShades() {
+    const layer = (paint) => {
+      const c = document.createElement('canvas');
+      c.width = W;
+      c.height = H;
+      paint(c.getContext('2d'));
+      return c;
+    };
+    formShades = {
+      bot: layer((sg) => {
+        sg.fillStyle = 'rgba(0,32,14,0.45)';
+        sg.fillRect(0, 0, W, H);
+        sg.fillStyle = 'rgba(61,220,132,0.12)';
+        for (let x = 0; x < W; x += TILE) sg.fillRect(x, 0, 1, H);
+        for (let y = 0; y < H; y += TILE) sg.fillRect(0, y, W, 1);
+        sg.fillStyle = 'rgba(0,0,0,0.16)';
+        for (let y = 0; y < H; y += 3) sg.fillRect(0, y, W, 1);
+      }),
+      agent: layer((sg) => {
+        sg.fillStyle = 'rgba(12,28,96,0.36)';
+        sg.fillRect(0, 0, W, H);
+        sg.fillStyle = 'rgba(127,211,255,0.16)';
+        for (let y = 4; y < H; y += 8) for (let x = 4; x < W; x += 8) sg.fillRect(x, y, 1, 1);
+      }),
+    };
+  }
+  function drawFormView(t, scr) {
+    const f = state.form;
+    if (f === 'human') return;
+    if (!formShades) buildFormShades();
+    g.drawImage(formShades[f], 0, 0);
+    const ox = scr >= 0 ? scr * W : 0;
+    g.save();
+    g.translate(-ox, 0);
+    if (f === 'bot') {
+      const sy = Math.floor((t / 14) % (H + 40)) - 20; // a scan line sweeps down
+      g.globalAlpha = 0.08;
+      rect(g, '#3ddc84', ox, sy - 6, W, 6);
+      g.globalAlpha = 0.22;
+      rect(g, '#3ddc84', ox, sy, W, 1);
+      g.globalAlpha = 1;
+    }
+    if (scr >= 0) {
+      if (f === 'bot') {
+        world.schema.forEach((p, si) => {
+          if (screenOf(p.x) !== scr || state.signs.includes(si)) return;
+          drawSchema(g, p.x * TILE, p.y * TILE, t);
+        });
+      }
+      customers.forEach((c, ci) => {
+        if (screenOf(c.house.x) !== scr || !taskOpen(f, ci)) return;
+        const p = (t / 900 + ci / 3) % 1; // rings pulse out of houses with a task waiting
+        g.globalAlpha = 1 - p;
+        g.strokeStyle = FORM_COLOR[f];
+        g.lineWidth = 1;
+        g.beginPath();
+        g.arc(c.house.x * TILE + 16, c.house.y * TILE + 16, 10 + p * 14, 0, Math.PI * 2);
+        g.stroke();
+        g.globalAlpha = 1;
+      });
+    }
+    playerActor(t).draw(); // the player stays crisp on top of the filter
+    g.restore();
   }
 
   function drawClouds(t) {
@@ -4017,6 +4748,7 @@ export default async function decorate(block) {
     butterflies.forEach((b) => drawButterfly(g, b, t));
     drawClouds(t);
     g.drawImage(southShade, 0, 0);
+    drawFormView(t, -1);
     // drifting blossom petals
     motes.forEach((m, i) => {
       const wob = Math.sin(t / 700 + m.phase) * 3;
@@ -4053,10 +4785,12 @@ export default async function decorate(block) {
       const x = c.house.x * TILE;
       const y = c.house.y * TILE;
       const bob = Math.round(Math.sin(t / 250 + i) * 1.5);
-      if (expansionOpen(i)) {
+      if (state.form === 'human' && expansionOpen(i)) {
         bang(x + 13, y + 11, i + 2, '#fff', '#2f6fd6');
         rect(g, '#fff', x + 14, y + 15 + bob, 4, 1); // turn the "!" into a "+"
         glow(g, x + 16, y + 15, 14, '#10306a', 0.9);
+      } else if (taskOpen(state.form, i)) {
+        bang(x + 13, y + 11, i + 2, '#fff', state.form === 'bot' ? '#1b7a45' : '#1d4fb8');
       } else if (state.deals.includes(i)) drawCheck(g, x + 13, y + 11 + bob);
       else if (missingFor(c).length) drawLock(g, x + 13, y + 11 + bob);
       else {
@@ -4068,6 +4802,12 @@ export default async function decorate(block) {
       drawGate(g, gt, i, state.gates[i], t);
       const pulse = 0.25 + 0.1 * Math.sin(t / 300 + i);
       if (!state.gates[i]) glow(g, gt.x * TILE + 8, gt.y * TILE + 8, 16, GATE_COLORS[i], pulse);
+      if (i === audienceGate && !state.gates[i] && formsUnlocked()) {
+        FORMS.forEach((f, k) => { // one light per audience
+          rect(g, INK, gt.x * TILE + 2 + k * 5, gt.y * TILE - 6, 4, 4);
+          rect(g, state.runeForms.includes(f) ? FORM_COLOR[f] : '#4a4560', gt.x * TILE + 3 + k * 5, gt.y * TILE - 5, 2, 2);
+        });
+      }
     });
     drawShrine(g, world.shrine, t);
 
@@ -4091,8 +4831,10 @@ export default async function decorate(block) {
           draw: () => {
             g.globalAlpha = Math.max(0, Math.min(1, w.alpha));
             const step = w.moving ? ['a', 'b'][Math.floor(t / 160) % 2] : 'stand';
+            if (w.daily) glow(g, wx + 8, wy + 6, 14, '#6a5210', 0.9);
             drawPerson(g, wx, wy, w.dir, step, w.pal, w.hair);
-            drawBubble(g, wx + 9, wy - 10 + Math.round(Math.sin(t / 300 + w.id)));
+            const [mark, bg] = w.daily ? [INK, '#ffe066'] : BUBBLE[w.audience];
+            drawBubble(g, wx + 9, wy - 10 + Math.round(Math.sin(t / 300 + w.id)), mark, bg);
             g.globalAlpha = 1;
           },
         };
@@ -4146,6 +4888,7 @@ export default async function decorate(block) {
     glow(g, world.oracle.x * TILE + 8, world.oracle.y * TILE + 6, 20, '#4b2c88', 0.6 + 0.2 * Math.sin(t / 500));
     drawParticles();
     g.restore();
+    drawFormView(t, scr);
 
     if (scr < 3) {
       motes.forEach((m) => {
