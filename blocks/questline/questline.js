@@ -27,6 +27,11 @@
  *   Expansion | <customer> | <upsell ask> | <best answer> | <weak answer> | ... | <ARR> | <link>
  *             Side quest: after a deal is won the customer asks for more. A right answer adds
  *             the expansion ARR (default 25% of the deal); a weak one costs 25% of it.
+ *   Resource  | <title> | <description> | <link>
+ *             Extra collateral shown in the Field readiness library (south of the realm).
+ *             The library also lists every expert, play, customer, rune gate question and
+ *             objection with its link, so players can study everything in one place.
+ * South of the village a road leads to Adobe: the library and a top-10 leaderboard.
  * Puzzles are spread across up to three rune gates; objections make up the boss fight.
  * Each customer lives in a house: three in the village, two in the grove behind Rune Gate 1
  * and two on the lake islands behind Rune Gate 2 (max 7). To propose a strategy the
@@ -57,6 +62,7 @@ const XP = {
   shrine: 10, // studying at the shrine
   reference: 10, // sharing the right customer story
   expansion: 15, // winning an upsell
+  library: 5, // first visit to the library
 };
 const levelOf = (xp) => Math.floor(xp / XP_PER_LEVEL);
 const MAX_GATES = 3;
@@ -163,6 +169,7 @@ function parseContent(block) {
     customers: [],
     references: [],
     expansions: [],
+    resources: [],
   };
   [...block.children].forEach((row) => {
     const cells = [...row.children];
@@ -257,6 +264,14 @@ function parseContent(block) {
           });
         }
         break;
+      case 'resource':
+      case 'library':
+        if (texts.length || link) {
+          content.resources.push({
+            title: texts[0] || link?.text || '', description: texts.slice(1).join(' '), link,
+          });
+        }
+        break;
       case 'expansion':
       case 'upsell': {
         const parts = [...texts];
@@ -291,6 +306,7 @@ function parseContent(block) {
     customers: content.customers,
     references: content.references,
     expansions: content.expansions,
+    resources: content.resources,
   };
 }
 
@@ -305,7 +321,8 @@ function buildWorld() {
 
   // village paths and decoration
   for (let x = 1; x < 9; x += 1) set(x, 8, ':');
-  for (let y = 4; y < 14; y += 1) set(4, y, ':');
+  for (let y = 4; y < ROWS - 1; y += 1) set(4, y, ':');
+  set(3, ROWS - 2, 'S'); // signpost: the road south leads to Adobe
   [[1, 5], [2, 13], [7, 5], [6, 9], [3, 10], [8, 13], [5, 1]].forEach(([x, y]) => set(x, y, 'f'));
   [[8, 1], [1, 1], [8, 10], [1, 14]].forEach(([x, y]) => set(x, y, 't'));
   // village (3), grove (2, behind Rune Gate 1), lake islands (2, behind Rune Gate 2)
@@ -340,6 +357,7 @@ function buildWorld() {
   // border
   for (let x = 0; x < COLS; x += 1) { set(x, 0, 'T'); set(x, ROWS - 1, 'T'); }
   for (let y = 0; y < ROWS; y += 1) { set(0, y, 'T'); set(COLS - 1, y, 'T'); }
+  set(4, ROWS - 1, ':'); // gap in the hedge
 
   const gates = [{ x: 9, y: 8 }, { x: 14, y: 4 }, { x: 18, y: 11 }];
   gates.forEach(({ x, y }) => set(x, y, 'G'));
@@ -352,10 +370,61 @@ function buildWorld() {
     npcSpots: [{ x: 3, y: 6 }, { x: 7, y: 7 }, { x: 2, y: 11 }, { x: 5, y: 13 }, { x: 12, y: 6 }],
     shrine: { x: 12, y: 13 },
     boss: { x: 20, y: 7 }, // 2x2
+    signpost: { x: 3, y: ROWS - 2 },
   };
 }
 
-const WALKABLE = new Set(['.', ':', 'f', '=', ',']);
+/* the second screen, south of the village: Adobe, with the library and the leaderboard */
+function buildSouth() {
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
+  const set = (x, y, c) => { grid[y][x] = c; };
+  const fill = (x0, y0, x1, y1, c) => {
+    for (let y = y0; y <= y1; y += 1) for (let x = x0; x <= x1; x += 1) set(x, y, c);
+  };
+
+  // pond with lily pads and a little pier
+  [[3, 19, 21], [4, 18, 22], [5, 17, 22], [6, 17, 22], [7, 17, 22], [8, 17, 22],
+    [9, 17, 22], [10, 18, 22], [11, 18, 21], [12, 19, 20]].forEach(([y, x0, x1]) => fill(x0, y, x1, y, '~'));
+  [[20, 4], [21, 7], [19, 11], [21, 10], [18, 6]].forEach(([x, y]) => set(x, y, 'p'));
+  set(16, 9, ':');
+  [17, 18, 19].forEach((x) => set(x, 9, '='));
+
+  // road from the village, then the plaza
+  for (let y = 0; y <= 8; y += 1) set(4, y, ':');
+  fill(5, 8, 7, 8, ':');
+  fill(8, 7, 15, 12, 'o');
+
+  const library = { x: 10, y: 3 }; // 4x4
+  fill(library.x, library.y, library.x + 3, library.y + 3, 'L');
+  const board = { x: 6, y: 5 }; // 2x1
+  fill(board.x, board.y, board.x + 1, board.y, 'B');
+  const fountain = { x: 11, y: 9 }; // 2x2
+  fill(fountain.x, fountain.y, fountain.x + 1, fountain.y + 1, 'F');
+  const lamps = [{ x: 8, y: 7 }, { x: 15, y: 7 }, { x: 8, y: 12 }, { x: 15, y: 12 }];
+  lamps.forEach(({ x, y }) => set(x, y, 'l'));
+  const signpost = { x: 5, y: 1 };
+  set(signpost.x, signpost.y, 'S');
+
+  [[2, 3], [1, 6], [2, 10], [1, 13], [7, 2], [15, 2], [16, 13], [19, 13], [22, 13], [22, 2],
+    [6, 13], [13, 14]].forEach(([x, y]) => set(x, y, 'k'));
+  [[9, 1], [3, 12]].forEach(([x, y]) => set(x, y, 't'));
+  [[16, 4], [17, 11], [22, 11], [18, 2], [2, 8], [7, 14], [14, 1]].forEach(([x, y]) => set(x, y, 'r'));
+  // flower beds along the southern lawn
+  [[2, 12], [3, 13], [4, 13], [5, 13], [9, 14], [12, 14], [15, 14], [17, 14], [18, 14], [21, 14]]
+    .forEach(([x, y]) => set(x, y, 'f'));
+  [[2, 2], [6, 3], [3, 7], [6, 10], [2, 14], [10, 13], [14, 13], [17, 12], [20, 14], [16, 6],
+    [16, 10], [9, 5], [14, 5], [11, 14], [5, 11]].forEach(([x, y]) => set(x, y, 'f'));
+
+  for (let x = 0; x < COLS; x += 1) { set(x, 0, 'T'); set(x, ROWS - 1, 'T'); }
+  for (let y = 0; y < ROWS; y += 1) { set(0, y, 'T'); set(COLS - 1, y, 'T'); }
+  set(4, 0, ':'); // the road back north
+
+  return {
+    grid, library, board, fountain, lamps, signpost,
+  };
+}
+
+const WALKABLE = new Set(['.', ':', 'f', '=', ',', 'o']);
 
 /* ---------- pixel art ---------- */
 
@@ -675,8 +744,8 @@ function drawPlayer(g, x, y, dir, step, li, t, avatar = DEFAULT_AVATAR) {
 
 /* terrain (static, rendered once into an offscreen canvas) */
 
-const WATERISH = new Set(['~', '=']);
-const PATHISH = new Set([':', 'G', '=']);
+const WATERISH = new Set(['~', '=', 'p']);
+const PATHISH = new Set([':', 'G', '=', 'o', 'l', 'F']);
 
 function drawGrass(g, x, y, tx, ty) {
   const h = hash(tx, ty);
@@ -694,24 +763,29 @@ function drawGrass(g, x, y, tx, ty) {
   rect(g, '#79bb62', x + ((l >>> 3) % 14) + 1, y + ((l >>> 7) % 14) + 1, 1, 1);
 }
 
-function drawTree(g, x, y, tx, ty, border) {
+function drawTree(g, x, y, tx, ty, border, blossom = false) {
   const h = hash(tx, ty);
   drawGrass(g, x, y, tx, ty);
   rect(g, 'rgba(0,0,0,0.22)', x + 3, y + 13, 11, 2);
   rect(g, 'rgba(0,0,0,0.22)', x + 5, y + 15, 7, 1);
   rect(g, '#6b4226', x + 7, y + 9, 3, 6);
   rect(g, '#4e2f1a', x + 9, y + 9, 1, 6);
-  const [dark, mid, light] = border
+  let [dark, mid, light] = border
     ? ['#1f4a26', '#2b6131', '#3c7c3e']
     : [['#24602b', '#33803a', '#4fa24a'], ['#2a5e2c', '#3a7d35', '#5a9e45']][h % 2];
+  if (blossom) [dark, mid, light] = [['#b2477a', '#e0739f', '#ffb3cf'], ['#a64d8c', '#d47ab8', '#f7c1e3']][h % 2];
   g.save();
   g.translate(x, y);
   blob(g, '#14301a', 8, 6, 6);
   blob(g, dark, 8, 6, 5);
   blob(g, mid, 7, 5, 4);
   blob(g, light, 6, 4, 2);
-  rect(g, '#8fd27a', 5, 3, 1, 1);
-  if (!border && h % 3 === 0) {
+  rect(g, blossom ? '#fff0f6' : '#8fd27a', 5, 3, 1, 1);
+  if (blossom) {
+    rect(g, '#fff0f6', 9, 6, 1, 1);
+    rect(g, '#fff0f6', 4, 7, 1, 1);
+    rect(g, '#ffd6e6', 11 - (h % 3), 12 + (h % 2), 1, 1); // a fallen petal
+  } else if (!border && h % 3 === 0) {
     rect(g, '#e63946', 10, 7, 1, 1);
     rect(g, '#e63946', 5, 8, 1, 1);
     rect(g, '#e63946', 9, 3, 1, 1);
@@ -757,6 +831,47 @@ function drawTerrainTile(g, grid, tx, ty) {
     case 't':
       drawTree(g, x, y, tx, ty, c === 'T');
       break;
+    case 'k':
+      drawTree(g, x, y, tx, ty, false, true);
+      break;
+    case 'r': {
+      drawGrass(g, x, y, tx, ty);
+      g.save();
+      g.translate(x, y);
+      rect(g, 'rgba(0,0,0,0.22)', 2, 12, 13, 3);
+      blob(g, INK, 8, 9, 6);
+      blob(g, '#7d8291', 8, 9, 5);
+      blob(g, '#9aa0ad', 7, 8, 3);
+      rect(g, '#c4c9d4', 5, 6, 2, 1);
+      if (h % 2) rect(g, '#5c8a3e', 3, 11, 4, 1); // moss
+      if (h % 3 === 0) {
+        blob(g, INK, 13, 12, 2);
+        blob(g, '#8a8f9c', 13, 12, 1);
+      }
+      g.restore();
+      break;
+    }
+    case 'o':
+    case 'l':
+    case 'F': {
+      // cobbled plaza
+      rect(g, '#8a8273', x, y, TILE, TILE);
+      for (let r = 0; r < 4; r += 1) {
+        for (let k = 0; k < 4; k += 1) {
+          const v = (h >>> ((r * 4 + k) % 24)) & 7;
+          const sx = x + k * 4 + (r % 2);
+          const sy = y + r * 4;
+          rect(g, ['#b8b09f', '#c4bcaa', '#aea694', '#bdb5a3'][v % 4], sx, sy, 3, 3);
+          rect(g, '#d8d1c0', sx, sy, 2, 1);
+        }
+      }
+      const edge = (nx, ny) => !PATHISH.has(at(nx, ny)) && at(nx, ny) !== 'L';
+      if (edge(tx, ty - 1)) rect(g, '#6d6658', x, y, TILE, 1);
+      if (edge(tx, ty + 1)) rect(g, '#6d6658', x, y + 15, TILE, 1);
+      if (edge(tx - 1, ty)) rect(g, '#6d6658', x, y, 1, TILE);
+      if (edge(tx + 1, ty)) rect(g, '#6d6658', x + 15, y, 1, TILE);
+      break;
+    }
     case '^':
     case 'G':
       rect(g, '#7d8291', x, y, TILE, TILE);
@@ -777,6 +892,7 @@ function drawTerrainTile(g, grid, tx, ty) {
       if (h % 4 === 1) rect(g, '#5c8a3e', x + ((h >>> 4) % 12) + 1, y + 6, 2, 1);
       break;
     case '~':
+    case 'p':
     case '=': {
       rect(g, '#3a7bd5', x, y, TILE, TILE);
       if (h % 3 === 0) rect(g, '#336fc4', x + (h % 8), y + ((h >>> 4) % 10) + 3, 7, 3);
@@ -785,6 +901,20 @@ function drawTerrainTile(g, grid, tx, ty) {
       if (shore(tx - 1, ty)) { rect(g, '#2a5fae', x, y, 2, TILE); rect(g, '#cfeaff', x + 2, y + (h % 3), 1, TILE - 3); }
       if (shore(tx + 1, ty)) { rect(g, '#cfeaff', x + 13, y + (h % 3), 1, TILE - 3); }
       if (shore(tx, ty + 1)) rect(g, '#cfeaff', x, y + 13, TILE, 1);
+      if (c === 'p') {
+        g.save();
+        g.translate(x, y);
+        blob(g, '#1f5e2a', 8, 9, 5);
+        blob(g, '#3f9a45', 8, 8, 5);
+        rect(g, '#3a7bd5', 8, 3, 2, 5); // the notch in the pad
+        rect(g, '#6cc46a', 5, 6, 2, 1);
+        if (h % 2) {
+          rect(g, '#ffd6e6', 10, 7, 3, 2);
+          rect(g, '#ff8fb8', 11, 6, 1, 1);
+          rect(g, '#fff6c9', 11, 7, 1, 1);
+        }
+        g.restore();
+      }
       if (c === '=') {
         rect(g, 'rgba(0,0,0,0.25)', x + 2, y + 2, 14, TILE);
         rect(g, '#6e4a26', x + 1, y, 14, TILE);
@@ -1045,6 +1175,175 @@ function drawHouse(g, hx, hy, tier, t) {
   if (tier >= 3) drawManor(g, x, y, t);
   else if (tier === 2) drawTownhouse(g, x, y, t);
   else drawCottage(g, x, y);
+}
+
+/* Adobe: library, blackboard, fountain, lamps, signposts */
+
+function drawLibrary(g, x, y, t) {
+  // x, y: top-left of the 4x4 tile footprint
+  rect(g, 'rgba(0,0,0,0.25)', x + 4, y + 61, 60, 3);
+  // steps
+  rect(g, '#8f8778', x + 1, y + 56, 62, 8);
+  rect(g, '#d6cdb8', x + 1, y + 56, 62, 2);
+  rect(g, '#c2b9a3', x + 4, y + 59, 56, 2);
+  rect(g, '#ded6c3', x + 4, y + 59, 56, 1);
+  rect(g, '#aca38e', x + 7, y + 62, 50, 2);
+  // stylobate
+  rect(g, INK, x + 2, y + 51, 60, 6);
+  rect(g, '#ece5d3', x + 3, y + 52, 58, 4);
+  rect(g, '#cfc6b0', x + 3, y + 55, 58, 1);
+  // shaded hall behind the columns
+  rect(g, '#4a3a2e', x + 5, y + 25, 54, 27);
+  rect(g, '#3a2d24', x + 5, y + 25, 54, 3);
+  // windows full of books
+  [12, 45].forEach((wx) => {
+    rect(g, INK, x + wx - 1, y + 30, 9, 16);
+    rect(g, '#ffd98a', x + wx, y + 31, 7, 14);
+    for (let r = 0; r < 3; r += 1) {
+      for (let k = 0; k < 7; k += 1) {
+        const col = ['#b23a48', '#3a6ea5', '#2f8f5b', '#e0a030', '#7a4b9c'][(k + r * 2 + wx) % 5];
+        rect(g, col, x + wx + k, y + 32 + r * 5, 1, 3 + ((k + r) % 2));
+      }
+      rect(g, '#8a5a2e', x + wx, y + 36 + r * 5, 7, 1);
+    }
+    rect(g, 'rgba(255,255,255,0.35)', x + wx, y + 31, 2, 4);
+  });
+  // open door with warm light and shelves inside
+  rect(g, INK, x + 26, y + 32, 12, 20);
+  rect(g, '#ffe2a0', x + 27, y + 34, 10, 18);
+  rect(g, '#ffe2a0', x + 28, y + 33, 8, 1);
+  [38, 43].forEach((sy) => {
+    rect(g, '#8a5a2e', x + 27, y + sy + 3, 10, 1);
+    for (let k = 0; k < 10; k += 1) {
+      rect(g, ['#b23a48', '#3a6ea5', '#2f8f5b', '#e0a030'][(k + sy) % 4], x + 27 + k, y + sy, 1, 3);
+    }
+  });
+  glow(g, x + 32, y + 46, 20, '#8a5a10', 0.55 + 0.15 * Math.sin(t / 600));
+  // Adobe-red banners
+  [21, 40].forEach((bx) => {
+    rect(g, INK, x + bx - 1, y + 25, 5, 15);
+    rect(g, '#eb1000', x + bx, y + 25, 3, 13);
+    rect(g, '#ff5a3c', x + bx, y + 25, 1, 13);
+    rect(g, '#4a3a2e', x + bx + 1, y + 37, 1, 1);
+    rect(g, '#fff', x + bx + 1, y + 29, 1, 3);
+  });
+  // columns
+  [6, 17, 43, 54].forEach((cx) => {
+    rect(g, INK, x + cx - 1, y + 26, 6, 25);
+    rect(g, '#f6f1e4', x + cx, y + 26, 4, 25);
+    rect(g, '#d6cdb8', x + cx + 3, y + 26, 1, 25);
+    rect(g, '#fffdf5', x + cx, y + 26, 1, 25);
+    rect(g, INK, x + cx - 2, y + 24, 8, 3);
+    rect(g, '#ece5d3', x + cx - 1, y + 25, 6, 1);
+    rect(g, '#ece5d3', x + cx - 1, y + 49, 6, 2);
+  });
+  // entablature (the frieze carries the HTML name label)
+  rect(g, INK, x + 1, y + 16, 62, 9);
+  rect(g, '#efe8d6', x + 2, y + 17, 60, 7);
+  rect(g, '#cfc6b0', x + 2, y + 23, 60, 1);
+  // pediment
+  for (let r = 0; r < 14; r += 1) {
+    const half = Math.round(3 + r * 2.15);
+    rect(g, INK, x + 32 - half - 1, y + 2 + r, half * 2 + 2, 1);
+    rect(g, r < 2 ? '#ece5d3' : '#ddd4bf', x + 32 - half, y + 2 + r, half * 2, 1);
+  }
+  rect(g, '#c6bca5', x + 4, y + 15, 56, 1);
+  // golden open book in the tympanum
+  const pulse = 0.6 + 0.25 * Math.sin(t / 500);
+  glow(g, x + 32, y + 10, 10, '#7a6010', pulse);
+  rect(g, '#8a6a10', x + 26, y + 8, 12, 5);
+  rect(g, '#f4d35e', x + 27, y + 8, 5, 4);
+  rect(g, '#f4d35e', x + 33, y + 8, 4, 4);
+  rect(g, '#fff6c9', x + 28, y + 9, 3, 1);
+  rect(g, '#fff6c9', x + 34, y + 9, 2, 1);
+}
+
+function drawBlackboard(g, x, y) {
+  // x, y: top-left of the 2x1 tile footprint; the board stands on two legs
+  rect(g, 'rgba(0,0,0,0.25)', x + 2, y + 14, 30, 2);
+  rect(g, '#4e2f1a', x + 4, y + 4, 2, 11);
+  rect(g, '#4e2f1a', x + 26, y + 4, 2, 11);
+  rect(g, INK, x, y - 17, 32, 22);
+  rect(g, '#8a5a2e', x + 1, y - 16, 30, 20);
+  rect(g, '#b07c45', x + 1, y - 16, 30, 1);
+  rect(g, '#1f3b2c', x + 3, y - 14, 26, 16);
+  rect(g, '#284a37', x + 3, y - 14, 26, 1);
+  // chalk rows under the HTML "TOP 10" heading
+  [18, 14, 16, 11].forEach((w, r) => {
+    rect(g, '#f4d35e', x + 5, y - 7 + r * 2, 1, 1);
+    rect(g, '#cfe0c8', x + 7, y - 7 + r * 2, w - 4, 1);
+    rect(g, '#9fc0a0', x + 7 + w - 2, y - 7 + r * 2, 3, 1);
+  });
+  rect(g, '#6e4524', x + 1, y + 3, 30, 2);
+  rect(g, '#fffdf5', x + 9, y + 2, 3, 1);
+  rect(g, '#ffd6e6', x + 20, y + 2, 2, 1);
+}
+
+function drawFountain(g, x, y, t) {
+  // x, y: top-left of the 2x2 tile footprint
+  g.save();
+  g.translate(x, y);
+  rect(g, 'rgba(0,0,0,0.22)', 3, 27, 28, 4);
+  blob(g, INK, 16, 19, 14);
+  blob(g, '#9a917f', 16, 18, 13);
+  blob(g, '#cfc6b0', 16, 17, 13);
+  blob(g, '#2a5fae', 16, 18, 10);
+  blob(g, '#3a7bd5', 16, 18, 9);
+  const o = Math.floor(t / 220) % 4;
+  rect(g, '#9cc6ff', 10 + o, 16, 4, 1);
+  rect(g, '#9cc6ff', 18 - o, 21, 4, 1);
+  // pedestal and upper bowl
+  rect(g, INK, 13, 7, 7, 12);
+  rect(g, '#d6cdb8', 14, 8, 5, 11);
+  rect(g, '#fffdf5', 14, 8, 1, 11);
+  blob(g, INK, 16, 8, 5);
+  blob(g, '#ece5d3', 16, 7, 4);
+  rect(g, '#6fa8ff', 13, 6, 7, 2);
+  // water jet: droplets on two arcs
+  for (let i = 0; i < 6; i += 1) {
+    const ph = ((t / 900) + i / 6) % 1;
+    const dx = Math.round(ph * 9);
+    const dy = Math.round(-6 * Math.sin(ph * Math.PI) + ph * 14);
+    rect(g, '#cfeaff', 16 + dx, 4 + dy, 1, 2);
+    rect(g, '#cfeaff', 16 - dx, 4 + dy, 1, 2);
+  }
+  rect(g, '#fff', 16, 1 + (Math.floor(t / 150) % 3), 1, 3);
+  g.restore();
+}
+
+function drawLamp(g, x, y, t) {
+  rect(g, 'rgba(0,0,0,0.25)', x + 5, y + 13, 7, 2);
+  rect(g, '#2b2b3a', x + 7, y + 1, 3, 13);
+  rect(g, '#2b2b3a', x + 5, y + 13, 7, 2);
+  rect(g, INK, x + 4, y - 7, 9, 9);
+  rect(g, '#ffe08a', x + 5, y - 6, 7, 7);
+  rect(g, '#fff6c9', x + 6, y - 5, 2, 3);
+  rect(g, '#2b2b3a', x + 4, y - 8, 9, 2);
+  rect(g, '#2b2b3a', x + 7, y - 10, 3, 2);
+  glow(g, x + 8, y - 3, 16, '#8a6a10', 0.55 + 0.1 * Math.sin(t / 300 + x));
+}
+
+function drawPost(g, x, y) {
+  rect(g, 'rgba(0,0,0,0.25)', x + 4, y + 14, 9, 2);
+  rect(g, '#4e2f1a', x + 7, y + 2, 3, 13);
+  rect(g, '#6e4524', x + 7, y + 2, 1, 13);
+}
+
+function drawButterfly(g, b, t) {
+  const a = (t / 1000) * b.speed + b.phase;
+  const x = Math.round(b.x + Math.sin(a) * b.rx);
+  const y = Math.round(b.y + Math.sin(a * 2) * b.ry + Math.sin(t / 180 + b.phase) * 1.5);
+  const open = Math.floor(t / 110 + b.phase * 3) % 2;
+  rect(g, INK, x, y, 1, 3);
+  if (open) {
+    rect(g, b.color, x - 2, y, 2, 2);
+    rect(g, b.color, x + 1, y, 2, 2);
+    rect(g, b.light, x - 2, y, 1, 1);
+    rect(g, b.light, x + 2, y, 1, 1);
+  } else {
+    rect(g, b.color, x - 1, y, 1, 2);
+    rect(g, b.color, x + 1, y, 1, 2);
+  }
 }
 
 function drawLock(g, x, y) {
@@ -1372,6 +1671,7 @@ export default async function decorate(block) {
   if (block.dataset.source && !block.children.length) await loadSourceRows(block);
   const content = parseContent(block);
   const world = buildWorld();
+  const south = buildSouth();
   const numGates = Math.min(MAX_GATES, content.puzzles.length);
   const gateQuestions = Array.from(
     { length: MAX_GATES },
@@ -1446,6 +1746,8 @@ export default async function decorate(block) {
     refBoost: {}, // customer index -> true when a reference was shared
     expWon: {}, // customer index -> expansion ARR closed
     expMisses: {}, // customer index -> weak expansion answers
+    area: 'realm', // 'realm' or 'south' (Adobe)
+    visited: [], // places that already paid their first-visit XP
   });
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
@@ -1455,6 +1757,8 @@ export default async function decorate(block) {
   state.arrWon = state.arrWon || {};
   ['letters', 'refsDelivered'].forEach((k) => { state[k] = state[k] || []; });
   ['refBoost', 'expWon', 'expMisses'].forEach((k) => { state[k] = state[k] || {}; });
+  state.visited = state.visited || [];
+  if (state.area !== 'south') state.area = 'realm';
   // what a customer's deal is still worth after failed pitches
   const PITCH_PENALTY = 0.25;
   const REFERENCE_BONUS = 1.15;
@@ -1537,7 +1841,52 @@ export default async function decorate(block) {
     sign.append(tag);
     return tag;
   });
-  if (signs.length) stage.append(el('div', { class: 'questline-signs' }, signs));
+  // HTML labels per screen: logos and the Adobe signpost up north, library and board down south
+  const place = (node, x, y, w, h) => {
+    Object.assign(node.style, {
+      left: pct(x, COLS * TILE),
+      top: pct(y, ROWS * TILE),
+      width: pct(w, COLS * TILE),
+      height: pct(h, ROWS * TILE),
+    });
+    return node;
+  };
+  const postLabel = (text, at) => place(
+    el('div', { class: 'questline-post', text }),
+    at.x * TILE - 6,
+    at.y * TILE - 3,
+    TILE + 12,
+    8,
+  );
+  const realmLabels = el('div', { class: 'questline-signs' }, signs, postLabel('Adobe ▼', world.signpost));
+  const southLabels = el(
+    'div',
+    { class: 'questline-signs', hidden: true },
+    postLabel('▲ Realm', south.signpost),
+    place(
+      el('div', { class: 'questline-frieze', text: 'Field readiness' }),
+      south.library.x * TILE + 2,
+      south.library.y * TILE + 17,
+      60,
+      7,
+    ),
+    place(
+      el('div', { class: 'questline-chalk', text: '🏆 TOP 10' }),
+      south.board.x * TILE + 3,
+      south.board.y * TILE - 14,
+      26,
+      6,
+    ),
+  );
+  stage.append(realmLabels, southLabels);
+  let shownArea = 'realm';
+  function applyArea() {
+    shownArea = state.area;
+    const inSouth = state.area === 'south';
+    realmLabels.hidden = inSouth;
+    southLabels.hidden = !inSouth;
+    canvas.setAttribute('aria-label', inSouth ? 'Adobe: library and leaderboard' : `${content.title} game map`);
+  }
 
   // expert nameplate: shown above the nearest expert when the player walks close
   const plateName = el('span', { class: 'questline-plate-name' });
@@ -1673,6 +2022,7 @@ export default async function decorate(block) {
 
   function walkable(x, y) {
     if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
+    if (state.area === 'south') return WALKABLE.has(south.grid[y][x]);
     if (npcAt(x, y) >= 0 || isBoss(x, y) || isShrine(x, y)) return false;
     const c = world.grid[y][x];
     if (c === 'G') return state.gates[gateAt(x, y)];
@@ -1683,6 +2033,15 @@ export default async function decorate(block) {
     const [dx, dy] = DIRS[state.dir];
     const x = state.x + dx;
     const y = state.y + dy;
+    if (state.area === 'south') {
+      const c = south.grid[y]?.[x];
+      if (c === 'L') return { type: 'library', label: 'enter the Field readiness library' };
+      if (c === 'B') return { type: 'board', label: 'read the top 10' };
+      if (c === 'S') return { type: 'signpost', label: 'read the signpost' };
+      if (c === 'F') return { type: 'fountain', label: 'toss a coin into the fountain' };
+      return null;
+    }
+    if (world.grid[y]?.[x] === 'S') return { type: 'signpost', label: 'read the signpost' };
     const n = npcAt(x, y);
     if (n >= 0) {
       const role = npcs[n].expertise ? ` (expert for ${npcs[n].expertise})` : '';
@@ -2358,6 +2717,246 @@ export default async function decorate(block) {
     });
   }
 
+  /* Adobe: library, leaderboard, signposts */
+
+  // a free-form panel in the overlay; resolves when closed (button or Esc)
+  function showPanel(panel, focusEl) {
+    return new Promise((resolve) => {
+      const close = () => {
+        overlay.hidden = true;
+        overlay.replaceChildren();
+        resolve();
+      };
+      panel.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      });
+      panel.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+      overlay.replaceChildren(panel);
+      overlay.hidden = false;
+      (focusEl || panel.querySelector('button'))?.focus({ preventScroll: true });
+      if (window.innerWidth < 700) overlay.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
+  function librarySections() {
+    const teacherName = (p) => (npcs[p.teacher] ? npcs[p.teacher].name : '');
+    const collateral = [];
+    const seen = new Set();
+    const addLink = (link, from) => {
+      if (!link || seen.has(link.href)) return;
+      seen.add(link.href);
+      collateral.push({
+        title: link.text || link.href, meta: from, link, linkLabel: 'Open ↗',
+      });
+    };
+    content.resources.forEach((r) => {
+      if (r.link) seen.add(r.link.href);
+      collateral.push({
+        title: r.title, meta: 'Resource', lines: [r.description], link: r.link, linkLabel: 'Open ↗',
+      });
+    });
+    npcs.forEach((n) => addLink(n.link, `Expert · ${n.name}`));
+    plays.forEach((p) => addLink(p.link, `Play · ${p.name}`));
+    customers.forEach((c) => addLink(c.link, `Customer · ${c.company}`));
+    content.puzzles.forEach((q) => addLink(q.link, 'Rune gate'));
+    content.objections.forEach((q) => addLink(q.link, 'Objection'));
+    content.expansions.forEach((e) => addLink(e.link, `Expansion · ${e.customer}`));
+    if (content.shrine) addLink(content.shrine.link, 'Shrine of Insight');
+    const study = (list) => list.map((q) => ({
+      title: q.prompt, answer: q.answer, link: q.link,
+    }));
+    return [
+      { icon: '📜', title: 'Collateral', items: collateral },
+      {
+        icon: '★',
+        title: 'Experts',
+        items: npcs.map((n, i) => ({
+          title: n.name,
+          meta: [n.expertise && `Expert for ${n.expertise}`, state.talked.includes(i) && '✓ met'].filter(Boolean).join(' · '),
+          lines: n.lines,
+          link: n.link,
+        })),
+      },
+      {
+        icon: '📘',
+        title: 'Plays',
+        items: plays.map((p, pi) => ({
+          title: p.name,
+          meta: [teacherName(p) && `Taught by ${teacherName(p)}`, state.plays.includes(pi) && '✓ learned'].filter(Boolean).join(' · '),
+          lines: [p.description],
+          link: p.link,
+        })),
+      },
+      {
+        icon: '🏠',
+        title: 'Customers',
+        items: customers.map((c, ci) => ({
+          title: c.company,
+          meta: [c.contact, `${money(c.arr)} ARR`, state.deals.includes(ci) && '✓ won'].filter(Boolean).join(' · '),
+          lines: [
+            ...c.situation,
+            c.best && `Best play: ${c.best}`,
+            c.needs.length && `Skills needed: ${c.needs.map((n) => n.name).join(', ')}`,
+          ],
+          link: c.link,
+        })),
+      },
+      { icon: '🔮', title: 'Rune gates', items: study(content.puzzles) },
+      { icon: '🛡', title: 'Objections', items: study(content.objections) },
+    ].filter((sec) => sec.items.length);
+  }
+
+  async function openLibrary() {
+    const sections = librarySections();
+    const body = el('div', { class: 'questline-lib-body', role: 'tabpanel', tabindex: '0' });
+    const item = (it) => el(
+      'article',
+      { class: 'questline-lib-item' },
+      el('p', { class: 'questline-lib-title', text: it.title }),
+      it.meta ? el('p', { class: 'questline-lib-meta', text: it.meta }) : null,
+      ...(it.lines || []).filter(Boolean).map((line) => el('p', { class: 'questline-lib-text', text: line })),
+      it.answer ? el(
+        'details',
+        { class: 'questline-lib-answer' },
+        el('summary', { text: 'Show the answer' }),
+        el('p', { text: it.answer }),
+      ) : null,
+      it.link ? el('a', {
+        class: 'questline-lib-link', href: it.link.href, target: '_blank', rel: 'noopener', text: `📜 ${it.linkLabel || it.link.text || 'Open'}`,
+      }) : null,
+    );
+    const tabs = [];
+    function select(i) {
+      tabs.forEach((b, k) => b.setAttribute('aria-selected', String(k === i)));
+      body.replaceChildren(...sections[i].items.map(item));
+      body.scrollTop = 0;
+    }
+    tabs.push(...sections.map((sec, i) => el(
+      'button',
+      {
+        type: 'button', class: 'questline-lib-tab', role: 'tab', 'aria-selected': 'false', onclick: () => select(i),
+      },
+      `${sec.icon} ${sec.title} `,
+      el('span', { class: 'questline-lib-count', text: String(sec.items.length) }),
+    )));
+    const tablist = el('div', { class: 'questline-lib-tabs', role: 'tablist', 'aria-label': 'Library sections' }, tabs);
+    tablist.addEventListener('keydown', (e) => {
+      const idx = tabs.indexOf(document.activeElement);
+      if (idx < 0 || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      e.preventDefault();
+      const to = (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[to].focus();
+      select(to);
+    });
+    const panel = el(
+      'div',
+      { class: 'questline-panel questline-panel-library', role: 'dialog', 'aria-label': 'Field readiness library' },
+      el('p', { class: 'questline-panel-title', text: '📚 Field readiness library' }),
+      el('p', { class: 'questline-note', text: 'Everything this realm teaches, in one place. Open the collateral, study the plays, peek at the answers.' }),
+      tablist,
+      body,
+      el('div', { class: 'questline-choices' }, el('button', {
+        type: 'button', class: 'questline-choice primary', 'data-close': '', text: 'Leave the library',
+      })),
+    );
+    if (sections.length) select(0);
+    if (!state.visited.includes('library')) {
+      state.visited.push('library');
+      gain(XP.library, 'visited the library');
+    }
+    await showPanel(panel, tabs[0]);
+  }
+
+  // sample data until the board reads the DA player sheet
+  const LEADERS = [
+    ['Sofia Marchetti', 'Italy', 0.99, 14], ['Kenji Watanabe', 'Japan', 0.96, 13],
+    ['Amara Okafor', 'UK', 0.93, 13], ['Lucas Becker', 'DACH', 0.9, 12],
+    ['Priyanka Rao', 'India', 0.86, 12], ['Mateo Álvarez', 'LATAM', 0.82, 11],
+    ['Hannah Lindqvist', 'Nordics', 0.78, 10], ['Noah Fischer', 'US East', 0.74, 10],
+    ['Chloé Dubois', 'France', 0.7, 9], ['Daniel Kim', 'US West', 0.65, 9],
+  ];
+  async function openLeaderboard() {
+    const goal = arrGoal || 5e6;
+    const rows = LEADERS.map(([name, region, share, level], i) => ({
+      name, region, level, arr: Math.round(goal * share), look: i,
+    }));
+    const mine = arrClosed();
+    const myRank = rows.filter((r) => r.arr > mine).length + 1;
+    const face = (i) => {
+      const c = el('canvas', {
+        class: 'questline-lb-face', width: 18, height: 19, 'aria-hidden': 'true',
+      });
+      const look = {
+        name: '',
+        style: HAIR_STYLES[(i * 3) % HAIR_STYLES.length].id,
+        hair: HAIR_COLORS[(i * 5 + 1) % HAIR_COLORS.length][1],
+        skin: SKIN_TONES[(i * 7 + 2) % SKIN_TONES.length][1],
+      };
+      drawPlayer(c.getContext('2d'), 1, 2, 'down', 'stand', lookIndex(rows[i].level), 0, look);
+      return c;
+    };
+    const table = el(
+      'ol',
+      { class: 'questline-lb' },
+      rows.map((r, i) => el(
+        'li',
+        { class: `questline-lb-row${i < 3 ? ` questline-lb-top${i + 1}` : ''}` },
+        el('span', { class: 'questline-lb-rank', text: ['🥇', '🥈', '🥉'][i] || `${i + 1}` }),
+        face(i),
+        el('span', { class: 'questline-lb-name', text: r.name }),
+        el('span', { class: 'questline-lb-meta', text: `Lv ${r.level} · ${r.region}` }),
+        el('span', { class: 'questline-lb-arr', text: money(r.arr) }),
+      )),
+    );
+    const me = el('p', {
+      class: 'questline-lb-me',
+      text: myRank <= 10
+        ? `⭐ ${avatar?.name || 'You'}: you would be #${myRank} with ${money(mine)} ARR!`
+        : `${avatar?.name || 'You'}: #${myRank} with ${money(mine)} ARR. Close deals to climb the board.`,
+    });
+    const panel = el(
+      'div',
+      { class: 'questline-panel questline-panel-board', role: 'dialog', 'aria-label': 'Top 10 sellers' },
+      el('p', { class: 'questline-panel-title', text: '🏆 Top 10 sellers' }),
+      table,
+      me,
+      el('p', { class: 'questline-note', text: 'Sample data for now. The real board will read the team sheet.' }),
+      el('div', { class: 'questline-choices' }, el('button', {
+        type: 'button', class: 'questline-choice primary', 'data-close': '', text: 'Back to the plaza',
+      })),
+    );
+    await showPanel(panel);
+  }
+
+  async function readSignpost() {
+    const inSouth = state.area === 'south';
+    await dialog.open({
+      speaker: 'Signpost',
+      lines: inSouth
+        ? [`▲ ${content.title}`, 'Experts, customers, the rune gates and the boss.']
+        : ['▼ Adobe', 'The Field readiness library and the top 10 board.'],
+      choices: next('OK'),
+    });
+  }
+
+  const WISHES = [
+    'May every pitch land on the first try.',
+    'May your pipeline overflow like this fountain.',
+    'May procurement sign before quarter end.',
+    'May the demo gods smile on you.',
+  ];
+  async function tossCoin() {
+    burst(south.fountain.x + 1, south.fountain.y + 1, '#f4d35e', 14);
+    await dialog.open({
+      speaker: 'Fountain',
+      lines: ['🪙 Plink! The coin sinks and glitters.', WISHES[Math.floor(Math.random() * WISHES.length)]],
+      choices: next('Make a wish ✨'),
+    });
+  }
+
   async function run(encounter) {
     if (busy) return;
     busy = true;
@@ -2381,6 +2980,10 @@ export default async function decorate(block) {
     else if (target.type === 'gate') run(() => challengeGate(target.index));
     else if (target.type === 'shrine') run(visitShrine);
     else if (target.type === 'boss') run(() => fightBoss());
+    else if (target.type === 'library') run(openLibrary);
+    else if (target.type === 'board') run(openLeaderboard);
+    else if (target.type === 'signpost') run(readSignpost);
+    else if (target.type === 'fountain') run(tossCoin);
   }
 
   async function storyMode() {
@@ -2402,6 +3005,7 @@ export default async function decorate(block) {
       state.x = world.boss.x - 1;
       state.y = world.boss.y + 1;
       state.dir = 'right';
+      state.area = 'realm';
       save();
     } finally {
       block.classList.remove('questline-story');
@@ -2447,10 +3051,38 @@ export default async function decorate(block) {
   }));
 
   /* input */
+  // walking off the gap in the hedge switches screens
+  function travel(to) {
+    busy = true;
+    stage.classList.add('questline-fading');
+    setTimeout(() => {
+      Object.assign(state, to);
+      motion.tx = state.x;
+      motion.ty = state.y;
+      save();
+      applyArea();
+      stage.classList.remove('questline-fading');
+      busy = false;
+      toast(to.area === 'south' ? '📍 Adobe' : `📍 ${content.title}`, 'skill');
+    }, 220);
+  }
+
   function tryStep(dir) {
     if (motion.moving || busy) return;
     state.dir = dir;
     const [dx, dy] = DIRS[dir];
+    if (state.area === 'realm' && dir === 'down' && state.y + dy >= ROWS && state.x === 4) {
+      travel({
+        area: 'south', x: 4, y: 0, dir: 'down',
+      });
+      return;
+    }
+    if (state.area === 'south' && dir === 'up' && state.y + dy < 0 && state.x === 4) {
+      travel({
+        area: 'realm', x: 4, y: ROWS - 1, dir: 'up',
+      });
+      return;
+    }
     if (walkable(state.x + dx, state.y + dy)) {
       motion.moving = true;
       motion.tx = state.x + dx;
@@ -2528,6 +3160,20 @@ export default async function decorate(block) {
       speed: 4 + Math.random() * 8,
     };
   });
+  const butterflies = [
+    {
+      x: 48, y: 70, rx: 22, ry: 10, speed: 0.7, phase: 0, color: '#ffd166', light: '#fff6c9',
+    },
+    {
+      x: 250, y: 205, rx: 30, ry: 12, speed: 0.55, phase: 2, color: '#8ecae6', light: '#e0f4ff',
+    },
+    {
+      x: 120, y: 215, rx: 26, ry: 8, speed: 0.8, phase: 4, color: '#ff8fb8', light: '#ffe0ec',
+    },
+    {
+      x: 300, y: 40, rx: 24, ry: 10, speed: 0.6, phase: 1, color: '#ffffff', light: '#ffd6e6',
+    },
+  ];
   function updateMotes(dt) {
     motes.forEach((m) => {
       if (m.ember) {
@@ -2574,14 +3220,33 @@ export default async function decorate(block) {
       hintEl.textContent = hint || ' ';
       lastHint = hint;
     }
-    updatePlate(!busy);
+    if (shownArea !== state.area) applyArea();
+    updatePlate(!busy && state.area === 'realm');
   }
 
   let terrain = null;
   let shade = null;
   let cloud = null;
+  let southTerrain = null;
+  let southShade = null;
   function buildOverlays() {
     terrain = buildTerrain(world.grid);
+    southTerrain = buildTerrain(south.grid);
+    // golden-hour light over Adobe
+    southShade = document.createElement('canvas');
+    southShade.width = W;
+    southShade.height = H;
+    const ss = southShade.getContext('2d');
+    const sun = ss.createRadialGradient(W * 0.85, -20, 10, W * 0.85, -20, W * 0.9);
+    sun.addColorStop(0, 'rgba(255,214,150,0.28)');
+    sun.addColorStop(1, 'rgba(255,170,120,0)');
+    ss.fillStyle = sun;
+    ss.fillRect(0, 0, W, H);
+    const sv = ss.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, W * 0.62);
+    sv.addColorStop(0, 'rgba(0,0,0,0)');
+    sv.addColorStop(1, 'rgba(40,10,40,0.35)');
+    ss.fillStyle = sv;
+    ss.fillRect(0, 0, W, H);
     shade = document.createElement('canvas');
     shade.width = W;
     shade.height = H;
@@ -2609,8 +3274,71 @@ export default async function decorate(block) {
     });
   }
 
+  function playerActor(t) {
+    const px = (motion.moving ? state.x + (motion.tx - state.x) * motion.prog : state.x) * TILE;
+    const py = (motion.moving ? state.y + (motion.ty - state.y) * motion.prog : state.y) * TILE;
+    let step = 'stand';
+    if (motion.moving) step = Math.floor(t / 130) % 2 ? 'a' : 'b';
+    return {
+      y: py,
+      draw: () => {
+        const li = lookIndex(levelOf(state.xp));
+        const look = avatar || DEFAULT_AVATAR;
+        drawPlayer(g, Math.round(px), Math.round(py), state.dir, step, li, t, look);
+      },
+    };
+  }
+
+  function drawClouds(t) {
+    g.globalAlpha = 0.09;
+    [0, 1].forEach((k) => {
+      const cx = ((((t / 1000) * (5 + k * 3)) + k * 260) % (W + 140)) - 130;
+      g.drawImage(cloud, Math.round(cx), 30 + k * 120);
+    });
+    g.globalAlpha = 1;
+  }
+
+  function drawParticles() {
+    particles.forEach((p) => {
+      g.globalAlpha = Math.max(0, p.life / 0.8);
+      rect(g, p.color, Math.round(p.x), Math.round(p.y), 2, 2);
+    });
+    g.globalAlpha = 1;
+  }
+
+  function renderSouth(t) {
+    g.drawImage(southTerrain, 0, 0);
+    drawAnimatedTiles(g, south.grid, t);
+    drawLibrary(g, south.library.x * TILE, south.library.y * TILE, t);
+    const at = (p) => [p.x * TILE, p.y * TILE];
+    const actors = [
+      playerActor(t),
+      ...south.lamps.map((l) => ({ y: l.y * TILE, draw: () => drawLamp(g, ...at(l), t) })),
+      { y: south.board.y * TILE, draw: () => drawBlackboard(g, ...at(south.board)) },
+      { y: (south.fountain.y + 1) * TILE, draw: () => drawFountain(g, ...at(south.fountain), t) },
+      { y: south.signpost.y * TILE, draw: () => drawPost(g, ...at(south.signpost)) },
+    ];
+    actors.sort((a, b) => a.y - b.y).forEach((a) => a.draw());
+    butterflies.forEach((b) => drawButterfly(g, b, t));
+    drawClouds(t);
+    g.drawImage(southShade, 0, 0);
+    // drifting blossom petals
+    motes.forEach((m, i) => {
+      if (m.ember) return;
+      const wob = Math.sin(t / 700 + m.phase) * 3;
+      g.globalAlpha = 0.55 + 0.35 * Math.sin(t / 300 + m.phase * 3);
+      rect(g, i % 2 ? '#ffc2d6' : '#fff0f6', Math.round(m.x + wob), Math.round(m.y), i % 3 ? 1 : 2, 1);
+    });
+    g.globalAlpha = 1;
+    drawParticles();
+  }
+
   function render(t) {
     if (!terrain) buildOverlays();
+    if (state.area === 'south') {
+      renderSouth(t);
+      return;
+    }
     g.drawImage(terrain, 0, 0);
     drawAnimatedTiles(g, world.grid, t);
     const bang = (x, y, phase, color = '#e63946', bg = '#fff') => {
@@ -2645,11 +3373,6 @@ export default async function decorate(block) {
     });
     drawShrine(g, world.shrine, t);
 
-    const px = (motion.moving ? state.x + (motion.tx - state.x) * motion.prog : state.x) * TILE;
-    const py = (motion.moving ? state.y + (motion.ty - state.y) * motion.prog : state.y) * TILE;
-    let step = 'stand';
-    if (motion.moving) step = Math.floor(t / 130) % 2 ? 'a' : 'b';
-
     const actors = [
       ...npcs.map((n, i) => ({
         y: n.y * TILE,
@@ -2661,13 +3384,10 @@ export default async function decorate(block) {
           else if (!state.talked.includes(i)) bang(n.x * TILE + 5, n.y * TILE - 11, i);
         },
       })),
+      playerActor(t),
       {
-        y: py,
-        draw: () => {
-          const li = lookIndex(levelOf(state.xp));
-          const look = avatar || DEFAULT_AVATAR;
-          drawPlayer(g, Math.round(px), Math.round(py), state.dir, step, li, t, look);
-        },
+        y: world.signpost.y * TILE,
+        draw: () => drawPost(g, world.signpost.x * TILE, world.signpost.y * TILE),
       },
     ];
     if (state.bossHp > 0) {
@@ -2681,12 +3401,7 @@ export default async function decorate(block) {
     actors.sort((a, b) => a.y - b.y).forEach((a) => a.draw());
 
     // clouds drift over the land
-    g.globalAlpha = 0.09;
-    [0, 1].forEach((k) => {
-      const cx = ((((t / 1000) * (5 + k * 3)) + k * 260) % (W + 140)) - 130;
-      g.drawImage(cloud, Math.round(cx), 30 + k * 120);
-    });
-    g.globalAlpha = 1;
+    drawClouds(t);
 
     // dusk over the arena, then the lights that cut through it
     g.drawImage(shade, 0, 0);
@@ -2708,11 +3423,7 @@ export default async function decorate(block) {
     });
     g.globalAlpha = 1;
 
-    particles.forEach((p) => {
-      g.globalAlpha = Math.max(0, p.life / 0.8);
-      rect(g, p.color, Math.round(p.x), Math.round(p.y), 2, 2);
-    });
-    g.globalAlpha = 1;
+    drawParticles();
   }
 
   let last = performance.now();
@@ -2727,6 +3438,7 @@ export default async function decorate(block) {
   }
 
   updateHud();
+  applyArea();
   requestAnimationFrame(frame);
   busy = false;
   run(intro);
