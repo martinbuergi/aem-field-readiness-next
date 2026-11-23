@@ -601,3 +601,126 @@
     display: none;
   }
 }
+
+/* player name in the HUD */
+.questline .questline-player {
+  max-width: 14ch;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* avatar creator */
+.questline .questline-creator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  margin: 8px 0;
+}
+
+.questline .questline-creator-preview {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 108px;
+  height: 114px;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 80%, rgb(244 211 94 / 25%), transparent 60%),
+    var(--ql-night-2);
+  box-shadow: inset 0 0 0 2px rgb(244 211 94 / 35%);
+}
+
+.questline .questline-creator-canvas {
+  width: 90px;
+  height: 95px;
+  image-rendering: pixelated;
+}
+
+.questline .questline-creator-fields {
+  display: grid;
+  flex: 1 1 240px;
+  gap: 10px;
+}
+
+.questline .questline-creator-group {
+  display: grid;
+  gap: 4px;
+}
+
+.questline .questline-creator-label {
+  font-family: var(--ql-pixel-font);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ql-gold);
+  text-transform: uppercase;
+}
+
+.questline .questline-creator-name {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 2px solid var(--ql-night-2);
+  border-radius: 6px;
+  background: #0f1230;
+  color: var(--ql-ink);
+  font: inherit;
+}
+
+.questline .questline-creator-name:focus {
+  border-color: var(--ql-gold);
+  outline: none;
+}
+
+.questline .questline-creator-name[aria-invalid='true'] {
+  border-color: var(--ql-bad);
+}
+
+.questline .questline-creator-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.questline .questline-opt {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 2px solid var(--ql-night-2);
+  border-radius: 6px;
+  background: #0f1230;
+  color: var(--ql-ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.questline .questline-opt:hover,
+.questline .questline-opt:focus-visible {
+  border-color: rgb(244 211 94 / 60%);
+  outline: none;
+}
+
+.questline .questline-opt[aria-pressed='true'] {
+  border-color: var(--ql-gold);
+  box-shadow: 0 0 0 2px rgb(244 211 94 / 30%);
+}
+
+.questline .questline-opt:has(.questline-swatch) {
+  min-width: 0;
+  padding: 3px;
+  border-radius: 50%;
+}
+
+.questline .questline-swatch {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 35%);
+}

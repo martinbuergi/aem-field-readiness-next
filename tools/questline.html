@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Questline</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <script src="/scripts/aem.js" type="module"></script>
+  <script src="/scripts/scripts.js" type="module"></script>
+  <link rel="stylesheet" href="/styles/styles.css">
+</head>
+<body>
+  <!--
+    DA app entry for the Questline game: open
+    https://da.live/app/martinbuergi/aem-field-readiness-next/tools/questline
+    da.live hands this page the signed-in Adobe token, so the game can load its content
+    from DA and save each player's avatar to /drafts/questline-players.
+  -->
+  <header></header>
+  <main>
+    <div>
+      <div class="questline" data-source="/drafts/questline"></div>
+    </div>
+  </main>
+  <footer></footer>
+</body>
+</html>
