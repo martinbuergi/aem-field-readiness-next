@@ -30,6 +30,12 @@
  *   Expansion | <customer> | <upsell ask> | <best answer> | <weak answer> | ... | <ARR> | <link>
  *             Side quest: after a deal is won the customer asks for more. A right answer adds
  *             the expansion ARR (default 25% of the deal); a weak one costs 25% of it.
+ *   Tip       | <field tip the Oracle shares> | <link>
+ *             The Oracle stands on the east shore of the lake; each bump shares the next tip.
+ *   Myth      | <claim, e.g. "Headless CMS is all I need"> | <best answer> | <weak answer> | ...
+ *             | <ARR, e.g. "$50k"> | <link>
+ *             Skeptics wander the trails and make these claims; busting a myth adds its ARR
+ *             (default $50k) once. A weak answer earns nothing; the myth comes back later.
  *   Resource  | <title> | <description> | <link>
  *             Extra collateral shown in the Field readiness library (south of the realm).
  *             The library also lists every expert, play, customer, rune gate question and
@@ -63,6 +69,9 @@ const screenOf = (x) => Math.floor(x / COLS);
 const SPEED = 6; // tiles per second
 const XP_PER_LEVEL = 50;
 const XP = {
+  tip: 2, // a new tip from the Oracle
+  myth: 10, // a skeptic's myth busted
+  duck: 3, // first chat with the Migration Duck
   meet: 10, // first conversation with an expert / villager
   hear: 5, // first time a customer shares their situation
   play: 15, // learning a play
@@ -107,7 +116,26 @@ const DEFAULT_CONTENT = {
     prompt: 'Why would anyone switch from me?', answer: 'Because the new offer solves their problem better', wrong: ['Because it is new'], link: null,
   }],
   shrine: null,
+  tips: [
+    { text: 'Open with their problem, not our product. Ask what slows their team down today.', link: null },
+    { text: 'Run their homepage through PageSpeed Insights before the meeting. A low score starts the conversation for you.', link: null },
+    { text: 'Show, don’t tell: import one of their pages at aem.new and demo it live.', link: null },
+  ],
+  myths: [{
+    prompt: 'Headless CMS is all I need.',
+    answer: 'AEM does headless too, and gives authors fast pages without building and running a frontend for every channel.',
+    wrong: ['You’re right, headless solves everything.', 'Headless is dead, stay away from it.'],
+    arr: 50000,
+    link: null,
+  }, {
+    prompt: 'Moving to a new CMS takes years.',
+    answer: 'Move section by section while the old site keeps running; aem.new imports a page in minutes to get started.',
+    wrong: ['True, plan for three years.', 'Only if you migrate everything in one weekend.'],
+    arr: 50000,
+    link: null,
+  }],
 };
+const MYTH_ARR = 50000; // default ARR for busting a myth
 
 /*
  * Texts of people, houses and places. Each one can be overridden in the DA sheet
@@ -167,6 +195,23 @@ const TEXTS = {
   'signpost.adobe': 'The Field readiness library and the top 10 board.',
   'fountain.coin': '🪙 Plink! The coin sinks and glitters.',
   'fountain.wishes': 'May every pitch land on the first try.\nMay your pipeline overflow like this fountain.\nMay procurement sign before quarter end.\nMay the demo gods smile on you.',
+  'oracle.name': 'The Oracle',
+  'oracle.role': '🧙 Keeper of field wisdom',
+  'oracle.title': 'Tip {n} of {total}',
+  'oracle.again': 'You have heard all my tips. Wisdom bears repeating.',
+  'oracle.done': 'Wise words',
+  'duck.name': 'The Migration Duck',
+  'duck.text': '“Quack! Do you know that you can move any website to AEM, fast? Try it yourself at aem.new.”',
+  'duck.open': 'Open aem.new ↗',
+  'duck.later': 'Maybe later',
+  'duck.url': 'https://aem.new',
+  'skeptic.names': 'Headless Hank\nSkeptical Sam\nLegacy Lou\nDIY Devin\nCautious Carla',
+  'myth.ask': 'Pick your best answer:',
+  'myth.won.title': '💡 Myth busted!',
+  'myth.won': '{who}: “Huh. I never thought of it that way.”',
+  'myth.lost.title': 'Not convinced',
+  'myth.lost': '{who}: “See? I knew it.”',
+  'myth.lost.note': 'No ARR this time. Skeptics keep wandering the trails: try again when you meet one.',
 };
 const SCREEN_KEYS = ['village', 'grove', 'lake', 'bay'];
 
@@ -245,6 +290,8 @@ function parseContent(block) {
     references: [],
     expansions: [],
     resources: [],
+    tips: [],
+    myths: [],
   };
   [...block.children].forEach((row) => {
     const cells = [...row.children];
@@ -350,6 +397,21 @@ function parseContent(block) {
           });
         }
         break;
+      case 'tip':
+        if (texts.length) content.tips.push({ text: texts.join(' '), link });
+        break;
+      case 'myth':
+      case 'claim': {
+        const parts = [...texts];
+        const arrAt = parts.findIndex((t, idx) => idx > 1 && MONEY.test(t));
+        const arr = arrAt >= 0 ? parseMoney(parts.splice(arrAt, 1)[0]) : 0;
+        if (parts.length >= 3) {
+          content.myths.push({
+            prompt: parts[0], answer: parts[1], wrong: parts.slice(2), arr: arr || MYTH_ARR, link,
+          });
+        }
+        break;
+      }
       case 'resource':
       case 'library':
         if (texts.length || link) {
@@ -399,6 +461,8 @@ function parseContent(block) {
     references: content.references,
     expansions: content.expansions,
     resources: content.resources,
+    tips: content.tips.length ? content.tips : DEFAULT_CONTENT.tips,
+    myths: content.myths.length ? content.myths : DEFAULT_CONTENT.myths,
   };
 }
 
@@ -501,6 +565,8 @@ function buildWorld() {
       x: 88, y: 6, w: 6, h: 4,
     },
     pier: { x: 87, y: 8 },
+    oracle: { x: 69, y: 4 }, // east shore of the lake
+    duck: { x: 8, y: 11 }, // floating at the edge of the village pond
     signpost: { x: 3, y: ROWS - 2 },
   };
 }
@@ -727,6 +793,10 @@ function lookIndex(level) {
 }
 
 const INK = '#1a1424';
+// the Oracle: dark suit, white shirt, Adobe-red tie
+PALETTES.oracle = {
+  h: '#3d3a3a', s: '#b9825f', e: '#1a1a2e', m: '#94603f', j: '#1f2433', w: '#fff', t: '#eb1000', p: '#1a1d29', b: '#111',
+};
 const spriteCache = new Map();
 // pixel sprite with a 1px dark outline (the canvas is 2px larger than the art)
 function sprite(key, rows, palette) {
@@ -1570,6 +1640,24 @@ function drawShrine(g, s, t) {
   rect(g, '#d6faff', x + 7, y + 4 + b, 1, 2);
 }
 
+// glasses for a front-facing person drawn at x, y
+function drawGlasses(g, x, y) {
+  const frame = [[3, 2, 3, 1], [8, 2, 3, 1], [6, 3, 2, 1], [3, 3, 1, 2], [5, 3, 1, 2], [8, 3, 1, 2],
+    [10, 3, 1, 2]];
+  frame.forEach(([gx, gy, w, h]) => rect(g, '#14141c', x + gx, y + gy, w, h));
+}
+
+// a little thought bubble with a "?" above a skeptic
+function drawBubble(g, x, y) {
+  rect(g, INK, x, y, 7, 7);
+  rect(g, '#fff', x + 1, y + 1, 5, 5);
+  rect(g, INK, x + 1, y + 7, 2, 1);
+  rect(g, '#e63946', x + 2, y + 2, 3, 1);
+  rect(g, '#e63946', x + 4, y + 3, 1, 1);
+  rect(g, '#e63946', x + 3, y + 4, 1, 1);
+  rect(g, '#e63946', x + 3, y + 5, 1, 1);
+}
+
 // filled pixel ellipse
 function oval(g, color, cx, cy, rx, ry) {
   g.fillStyle = color;
@@ -1577,6 +1665,33 @@ function oval(g, color, cx, cy, rx, ry) {
     const half = Math.floor(rx * Math.sqrt(1 - (dy * dy) / (ry * ry)) + 0.35);
     g.fillRect(cx - half, cy + dy, half * 2 + 1, 1);
   }
+}
+
+// the Migration Duck: a rubber duck in sunglasses, bobbing on the pond
+function drawDuck(g, x, y, t) {
+  const bob = Math.round(Math.sin(t / 450));
+  g.globalAlpha = 0.6;
+  rect(g, '#cfeaff', x + 1, y + 13, 14, 1);
+  rect(g, '#cfeaff', x + 3 + (Math.floor(t / 400) % 3), y + 15, 9, 1);
+  g.globalAlpha = 1;
+  g.save();
+  g.translate(x, y + bob);
+  oval(g, INK, 8, 10, 7, 4);
+  oval(g, '#ffd23f', 8, 10, 6, 3);
+  rect(g, '#fff0a0', 4, 8, 6, 1);
+  rect(g, INK, 14, 5, 2, 4);
+  rect(g, '#ffd23f', 14, 6, 1, 3);
+  rect(g, '#e6b800', 8, 10, 4, 2);
+  blob(g, INK, 6, 4, 4);
+  blob(g, '#ffd23f', 6, 4, 3);
+  rect(g, INK, 0, 4, 3, 3);
+  rect(g, '#ff8c1a', 1, 4, 2, 2);
+  rect(g, '#ff8c1a', 0, 5, 1, 1);
+  rect(g, '#111', 3, 2, 6, 2);
+  rect(g, '#111', 9, 2, 1, 1);
+  rect(g, '#6fa8ff', 4, 2, 1, 1);
+  rect(g, '#6fa8ff', 7, 2, 1, 1);
+  g.restore();
 }
 
 // the whale account: drawn in a 64x48 design space at 1.5x (6x4.5 tiles), facing the pier,
@@ -1960,7 +2075,8 @@ export default async function decorate(block) {
     return e ? { ...e, arr: e.arr || Math.round(c.arr * 0.25) } : null;
   });
   const { whale } = content;
-  const arrGoal = whale.arr
+  const mythArr = content.myths.reduce((sum, m) => sum + m.arr, 0);
+  const arrGoal = whale.arr + mythArr
     + customers.reduce((sum, c, ci) => sum + c.arr + (expansions[ci]?.arr || 0), 0);
 
   /* state */
@@ -1995,6 +2111,8 @@ export default async function decorate(block) {
     whaleMisses: 0, // objections the whale was not convinced by
     whaleArr: 0, // ARR of the signed whale deal
     layout: 2, // the map version the saved position belongs to
+    tipsHeard: [], // Oracle tips heard
+    mythsWon: {}, // myth index -> ARR earned by busting it
   });
   const saved = loadSave();
   let state = { ...fresh(), ...(saved || {}) };
@@ -2014,6 +2132,8 @@ export default async function decorate(block) {
   }
   state.whaleMisses = state.whaleMisses || 0;
   state.whaleArr = state.whaleArr || 0;
+  state.tipsHeard = state.tipsHeard || [];
+  state.mythsWon = state.mythsWon || {};
   // what a customer's deal is still worth after failed pitches
   const PITCH_PENALTY = 0.25;
   const REFERENCE_BONUS = 1.15;
@@ -2025,7 +2145,8 @@ export default async function decorate(block) {
   const expansionOpen = (ci) => !!expansions[ci]
     && state.deals.includes(ci) && !(ci in state.expWon);
   const sum = (obj) => Object.values(obj).reduce((a, v) => a + v, 0);
-  const arrClosed = () => sum(state.arrWon) + sum(state.expWon) + state.whaleArr;
+  const arrClosed = () => sum(state.arrWon) + sum(state.expWon) + state.whaleArr
+    + sum(state.mythsWon);
   const WHALE_PENALTY = 0.1;
   const whaleValue = () => Math.round(
     whale.arr * Math.max(0.5, 1 - WHALE_PENALTY * state.whaleMisses),
@@ -2043,6 +2164,12 @@ export default async function decorate(block) {
   const motion = {
     moving: false, tx: state.x, ty: state.y, prog: 0,
   };
+  // skeptics wandering the trails of the current screen, each with an unbusted myth
+  const walkers = [];
+  let walkerSeq = 0;
+  const walkerAt = (x, y) => walkers.findIndex((w) => !w.leaving
+    && ((w.x === x && w.y === y) || (w.moving && w.tx === x && w.ty === y)));
+  const pendingMyths = () => content.myths.map((_, i) => i).filter((i) => !(i in state.mythsWon));
   const held = [];
   let busy = true;
   let bossHitAt = -1000;
@@ -2156,6 +2283,15 @@ export default async function decorate(block) {
     13,
   );
   screenLabels[3].append(whaleTag);
+  const floatTag = (text, at, w) => place(
+    el('div', { class: 'questline-tag', text }),
+    at.x * TILE + 8 - w / 2,
+    at.y * TILE - 13,
+    w,
+    8,
+  );
+  screenLabels[screenOf(world.oracle.x)].append(floatTag(`🧙 ${T('oracle.name')}`, world.oracle, 52));
+  screenLabels[screenOf(world.duck.x)].append(floatTag('🦆 aem.new', world.duck, 40));
   const southLabels = el(
     'div',
     { class: 'questline-signs', hidden: true },
@@ -2312,6 +2448,8 @@ export default async function decorate(block) {
     const side = [];
     const openExp = customers.filter((_, ci) => expansionOpen(ci)).length;
     if (openExp) side.push(`${openExp} expansion${openExp === 1 ? '' : 's'} (blue +)`);
+    const myths = pendingMyths().length;
+    if (myths) side.push(`${myths} myth${myths === 1 ? '' : 's'} to bust (wandering skeptics)`);
     if (lettersHeld().length) side.push(`${lettersHeld().length} reference letter${lettersHeld().length === 1 ? '' : 's'} to share`);
     objectiveEl.textContent = side.length ? `${objective} · Side quests: ${side.join(', ')}` : objective;
   }
@@ -2331,6 +2469,7 @@ export default async function decorate(block) {
     if (x < 0 || y < 0 || y >= ROWS) return false;
     if (state.area === 'south') return x < COLS && WALKABLE.has(south.grid[y][x]);
     if (x >= WCOLS || npcAt(x, y) >= 0 || isWhale(x, y) || isShrine(x, y)) return false;
+    if (walkerAt(x, y) >= 0 || (x === world.oracle.x && y === world.oracle.y)) return false;
     const c = world.grid[y][x];
     if (c === 'G') return state.gates[gateAt(x, y)];
     return WALKABLE.has(c);
@@ -2354,6 +2493,14 @@ export default async function decorate(block) {
       const role = npcs[n].expertise ? ` (expert for ${npcs[n].expertise})` : '';
       return { type: 'npc', index: n, label: `talk to ${npcs[n].name}${role}` };
     }
+    if (x === world.oracle.x && y === world.oracle.y) {
+      return { type: 'oracle', label: `ask ${T('oracle.name')} for a tip` };
+    }
+    if (x === world.duck.x && y === world.duck.y) {
+      return { type: 'duck', label: `talk to ${T('duck.name')}` };
+    }
+    const wi = walkerAt(x, y);
+    if (wi >= 0) return { type: 'walker', index: walkers[wi].id, label: `talk to ${walkers[wi].name}` };
     const ci = customerAt(x, y);
     if (ci >= 0) {
       const c = customers[ci];
@@ -2934,7 +3081,7 @@ export default async function decorate(block) {
           customers.length ? `Deals won: ${state.deals.length}/${customers.length}` : '',
           customers.length ? `💰 ARR closed: ${money(arrClosed())} of ${money(arrGoal)} (${Math.round((arrClosed() / arrGoal) * 100)}%)` : '',
           references.length || expansions.some(Boolean)
-            ? `Side quests: ${state.refsDelivered.length}/${references.length} references · ${Object.keys(state.expWon).length}/${expansions.filter(Boolean).length} expansions`
+            ? `Side quests: ${state.refsDelivered.length}/${references.length} references · ${Object.keys(state.expWon).length}/${expansions.filter(Boolean).length} expansions · ${Object.keys(state.mythsWon).length}/${content.myths.length} myths`
             : '',
         ],
         choices: [
@@ -3052,6 +3199,88 @@ export default async function decorate(block) {
     });
   }
 
+  /* the Oracle, the Migration Duck and the wandering skeptics */
+  async function askOracle() {
+    const { tips } = content;
+    const next0 = tips.findIndex((_, k) => !state.tipsHeard.includes(k));
+    const i = next0 >= 0 ? next0 : Math.floor(Math.random() * tips.length);
+    const first = next0 >= 0;
+    if (first) {
+      state.tipsHeard.push(i);
+      gain(XP.tip, 'wisdom from the Oracle');
+      save();
+    }
+    burst(world.oracle.x, world.oracle.y - 0.5, '#c9b6ff', 14);
+    await dialog.open({
+      speaker: T('oracle.name'),
+      role: T('oracle.role'),
+      title: T('oracle.title', { n: i + 1, total: tips.length }),
+      lines: [tips[i].text],
+      link: tips[i].link,
+      note: first ? `+${XP.tip} XP · ${state.tipsHeard.length}/${tips.length} tips heard` : T('oracle.again'),
+      choices: next(T('oracle.done')),
+    });
+  }
+
+  async function visitDuck() {
+    if (!state.visited.includes('duck')) {
+      state.visited.push('duck');
+      gain(XP.duck, 'met the Migration Duck');
+      save();
+    }
+    const go = await dialog.open({
+      speaker: T('duck.name'),
+      lines: [T('duck.text')],
+      choices: [
+        { label: T('duck.open'), value: true, primary: true },
+        { label: T('duck.later'), value: false },
+      ],
+    });
+    if (go) window.open(T('duck.url'), '_blank', 'noopener');
+  }
+
+  async function debateSkeptic(id) {
+    const w = walkers.find((k) => k.id === id);
+    if (!w) return;
+    const m = content.myths[w.myth];
+    w.talking = true;
+    w.moving = false;
+    w.dir = {
+      up: 'down', down: 'up', left: 'right', right: 'left',
+    }[state.dir];
+    try {
+      const ok = await ask(m, w.name, [`“${m.prompt}”`, T('myth.ask')]);
+      if (ok) {
+        state.mythsWon[w.myth] = m.arr;
+        burst(w.x, w.y, '#3ddc84', 24);
+        toast(`💡 +${money(m.arr)} ARR`, 'arr');
+        gain(reward(XP.myth, `m${w.myth}`), 'myth busted');
+        updateHud();
+        save();
+        await dialog.open({
+          tone: 'good',
+          title: T('myth.won.title'),
+          lines: [T('myth.won', { who: w.name }), `💰 +${money(m.arr)} ARR · ${money(arrClosed())} of ${money(arrGoal)} goal`],
+          link: m.link,
+          choices: next('Onward'),
+        });
+      } else {
+        miss(`m${w.myth}`);
+        await dialog.open({
+          tone: 'bad',
+          title: T('myth.lost.title'),
+          lines: [T('myth.lost', { who: w.name }), `Better answer: ${m.answer}`],
+          note: T('myth.lost.note'),
+          link: m.link,
+          choices: next('Continue'),
+        });
+      }
+    } finally {
+      w.talking = false;
+      w.leaving = true; // off they go, convinced or not
+    }
+  }
+
   /* Adobe: library, leaderboard, signposts */
 
   // a free-form panel in the overlay; resolves when closed (button or Esc)
@@ -3100,6 +3329,8 @@ export default async function decorate(block) {
     content.objections.forEach((q) => addLink(q.link, 'Objection'));
     content.expansions.forEach((e) => addLink(e.link, `Expansion · ${e.customer}`));
     if (content.shrine) addLink(content.shrine.link, T('shrine.name'));
+    content.tips.forEach((tip) => addLink(tip.link, T('oracle.name')));
+    content.myths.forEach((m) => addLink(m.link, 'Myth'));
     const study = (list) => list.map((q) => ({
       title: q.prompt, answer: q.answer, link: q.link,
     }));
@@ -3141,6 +3372,14 @@ export default async function decorate(block) {
       },
       { icon: '🔮', title: 'Rune gates', items: study(content.puzzles) },
       { icon: '🛡', title: 'Objections', items: study(content.objections) },
+      { icon: '💡', title: 'Myths', items: study(content.myths) },
+      {
+        icon: '🧙',
+        title: 'Oracle tips',
+        items: content.tips.map((tip, i) => ({
+          title: tip.text, meta: state.tipsHeard.includes(i) ? '✓ heard' : '', link: tip.link,
+        })),
+      },
     ].filter((sec) => sec.items.length);
   }
 
@@ -3323,6 +3562,9 @@ export default async function decorate(block) {
     else if (target.type === 'board') run(openLeaderboard);
     else if (target.type === 'signpost') run(readSignpost);
     else if (target.type === 'fountain') run(tossCoin);
+    else if (target.type === 'oracle') run(askOracle);
+    else if (target.type === 'duck') run(visitDuck);
+    else if (target.type === 'walker') run(() => debateSkeptic(target.index));
   }
 
   async function storyMode() {
@@ -3534,6 +3776,114 @@ export default async function decorate(block) {
     });
   }
 
+  const WALKER_SPEED = 2.4; // tiles per second
+  const TRAIL = new Set([':', '=', 'd', 'o']);
+  const rand = (n) => Math.floor(Math.random() * n);
+  const skepticNames = () => T('skeptic.names').split('\n').map((n) => n.trim()).filter(Boolean);
+  let walkerTimer = 2; // seconds until the next skeptic may appear
+
+  function walkerCanEnter(x, y, w) {
+    if (screenOf(x) !== w.screen || !TRAIL.has(world.grid[y]?.[x])) return false;
+    if (npcAt(x, y) >= 0 || walkers.some((o) => o !== w && !o.leaving
+      && ((o.x === x && o.y === y) || (o.moving && o.tx === x && o.ty === y)))) return false;
+    if (state.x === x && state.y === y) return false;
+    return !(motion.moving && motion.tx === x && motion.ty === y);
+  }
+
+  // a skeptic steps onto the trail somewhere on this screen, away from the player
+  function spawnWalker() {
+    const taken = walkers.map((w) => w.myth);
+    const myths = pendingMyths().filter((i) => !taken.includes(i));
+    if (!myths.length) return;
+    const scr = screenOf(state.x);
+    const probe = { screen: scr };
+    const spots = [];
+    for (let y = 1; y < ROWS - 1; y += 1) {
+      for (let x = scr * COLS + 1; x < (scr + 1) * COLS - 1; x += 1) {
+        const far = Math.abs(x - state.x) + Math.abs(y - state.y) > 4;
+        if (far && walkerCanEnter(x, y, probe)) spots.push({ x, y });
+      }
+    }
+    if (!spots.length) return;
+    const spot = spots[rand(spots.length)];
+    const names = skepticNames().filter((n) => !walkers.some((w) => w.name === n));
+    const look = rand(1000);
+    walkerSeq += 1;
+    walkers.push({
+      id: walkerSeq,
+      ...spot,
+      tx: spot.x,
+      ty: spot.y,
+      prog: 0,
+      moving: false,
+      dir: 'down',
+      alpha: 0,
+      leaving: false,
+      talking: false,
+      pause: 0.8,
+      steps: 10 + rand(16),
+      screen: scr,
+      myth: myths[rand(myths.length)],
+      name: names.length ? names[rand(names.length)] : 'A skeptic',
+      pal: `npc${look % 5}`,
+      hair: NPC_HAIR[look % NPC_HAIR.length],
+    });
+  }
+
+  // mostly keep walking straight, sometimes turn, rarely go back
+  function stepWalker(w) {
+    const back = {
+      up: 'down', down: 'up', left: 'right', right: 'left',
+    }[w.dir];
+    const opts = Object.entries(DIRS)
+      .map(([dir, [dx, dy]]) => ({ dir, x: w.x + dx, y: w.y + dy }))
+      .filter((o) => walkerCanEnter(o.x, o.y, w));
+    if (!opts.length) {
+      w.pause = 0.5;
+      return;
+    }
+    const ahead = opts.find((o) => o.dir === w.dir);
+    const onward = opts.filter((o) => o.dir !== back);
+    let pick = ahead && Math.random() < 0.75 ? ahead : null;
+    if (!pick) pick = (onward.length ? onward : opts)[rand((onward.length ? onward : opts).length)];
+    Object.assign(w, {
+      dir: pick.dir, tx: pick.x, ty: pick.y, moving: true, prog: 0,
+    });
+  }
+
+  function updateWalkers(dt) {
+    const scr = state.area === 'realm' ? screenOf(state.x) : -1;
+    for (let i = walkers.length - 1; i >= 0; i -= 1) {
+      const w = walkers[i];
+      if (w.screen !== scr || (w.leaving && w.alpha <= 0)) walkers.splice(i, 1);
+    }
+    if (scr < 0 || busy) return;
+    walkers.forEach((w) => {
+      if (w.leaving) {
+        w.alpha -= dt * 2.5; // fades off the trail
+      } else if (w.alpha < 1) {
+        w.alpha = Math.min(1, w.alpha + dt * 2.5); // fades onto the trail
+      } else if (w.moving) {
+        w.prog += dt * WALKER_SPEED;
+        if (w.prog >= 1) {
+          Object.assign(w, {
+            x: w.tx, y: w.ty, moving: false, prog: 0, steps: w.steps - 1,
+          });
+          if (Math.random() < 0.2) w.pause = 0.4 + Math.random();
+          if (w.steps <= 0) w.leaving = true;
+        }
+      } else if (w.pause > 0) {
+        w.pause -= dt;
+      } else stepWalker(w);
+    });
+    walkerTimer -= dt;
+    if (walkerTimer <= 0) {
+      walkerTimer = 3 + Math.random() * 5;
+      const active = walkers.filter((w) => !w.leaving).length;
+      if (active < Math.min(2, pendingMyths().length)) spawnWalker();
+    }
+  }
+
   function update(dt) {
     if (motion.moving) {
       motion.prog += dt * SPEED;
@@ -3547,6 +3897,7 @@ export default async function decorate(block) {
     }
     if (held.length) tryStep(held[held.length - 1]);
     updateMotes(dt);
+    updateWalkers(dt);
     for (let i = particles.length - 1; i >= 0; i -= 1) {
       const p = particles[i];
       p.life -= dt;
@@ -3735,6 +4086,42 @@ export default async function decorate(block) {
         },
       })),
       playerActor(t),
+      ...walkers.map((w) => {
+        const wx = Math.round((w.moving ? w.x + (w.tx - w.x) * w.prog : w.x) * TILE);
+        const wy = Math.round((w.moving ? w.y + (w.ty - w.y) * w.prog : w.y) * TILE);
+        return {
+          y: wy,
+          draw: () => {
+            g.globalAlpha = Math.max(0, Math.min(1, w.alpha));
+            const step = w.moving ? ['a', 'b'][Math.floor(t / 160) % 2] : 'stand';
+            drawPerson(g, wx, wy, w.dir, step, w.pal, w.hair);
+            drawBubble(g, wx + 9, wy - 10 + Math.round(Math.sin(t / 300 + w.id)));
+            g.globalAlpha = 1;
+          },
+        };
+      }),
+      {
+        y: world.oracle.y * TILE,
+        draw: () => {
+          const ox0 = world.oracle.x * TILE;
+          const oy0 = world.oracle.y * TILE;
+          g.globalAlpha = 0.25 + 0.1 * Math.sin(t / 500);
+          oval(g, '#c9b6ff', ox0 + 8, oy0 + 15, 9, 3);
+          g.globalAlpha = 1;
+          drawPerson(g, ox0, oy0, 'down', 'stand', 'oracle', 'short');
+          drawGlasses(g, ox0, oy0);
+          const a = t / 700;
+          rect(g, '#efe2ff', ox0 + 8 + Math.round(Math.cos(a) * 9), oy0 + 4 + Math.round(Math.sin(a) * 4), 2, 2);
+          if (state.tipsHeard.length < content.tips.length) {
+            rect(g, '#b388ff', ox0 + 7, oy0 - 9 + Math.round(Math.sin(t / 250)), 2, 5);
+            rect(g, '#b388ff', ox0 + 7, oy0 - 3 + Math.round(Math.sin(t / 250)), 2, 1);
+          }
+        },
+      },
+      {
+        y: world.duck.y * TILE,
+        draw: () => drawDuck(g, world.duck.x * TILE, world.duck.y * TILE, t),
+      },
       {
         y: world.signpost.y * TILE,
         draw: () => drawPost(g, world.signpost.x * TILE, world.signpost.y * TILE),
@@ -3759,6 +4146,7 @@ export default async function decorate(block) {
       glow(g, world.whale.x * TILE + 33, world.whale.y * TILE - 4, 36, '#7a6010', 0.8 + 0.2 * Math.sin(t / 300));
     }
     glow(g, world.shrine.x * TILE + 8, world.shrine.y * TILE + 6, 22, '#1d6f88', 0.7 + 0.2 * Math.sin(t / 400));
+    glow(g, world.oracle.x * TILE + 8, world.oracle.y * TILE + 6, 20, '#4b2c88', 0.6 + 0.2 * Math.sin(t / 500));
     drawParticles();
     g.restore();
 

@@ -882,6 +882,23 @@
   color: #2a1a0e;
 }
 
+/* name tags floating over the Oracle and the Migration Duck */
+.questline .questline-tag {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border-radius: 0.6cqw;
+  background: rgb(20 16 40 / 72%);
+  font-family: var(--ql-pixel-font);
+  font-size: 1.05cqw;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: #f1e9ff;
+  pointer-events: none;
+}
+
 /* the library's name on its frieze */
 .questline .questline-frieze {
   position: absolute;
