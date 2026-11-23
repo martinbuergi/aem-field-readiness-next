@@ -61,6 +61,13 @@
   font-weight: 700;
 }
 
+.questline .questline-rank {
+  color: var(--ql-gold);
+  font-size: 0.85em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .questline .questline-xpbar {
   position: relative;
   width: 80px;
@@ -134,11 +141,19 @@
   outline: none;
   overflow: hidden;
   line-height: 0;
-  box-shadow: 0 0 0 3px var(--ql-night-2);
+  box-shadow:
+    0 0 0 2px #0b0a14,
+    0 0 0 5px #6b5a2e,
+    0 0 0 7px #0b0a14,
+    0 10px 30px rgb(0 0 0 / 45%);
 }
 
 .questline .questline-stage:focus-visible {
-  box-shadow: 0 0 0 3px var(--ql-gold);
+  box-shadow:
+    0 0 0 2px #0b0a14,
+    0 0 0 5px var(--ql-gold),
+    0 0 0 7px #0b0a14,
+    0 10px 30px rgb(0 0 0 / 45%);
 }
 
 .questline .questline-canvas {
@@ -168,6 +183,23 @@
   background: #fffdf5;
   box-shadow: 0 0.3cqw 0 rgb(0 0 0 / 35%);
   line-height: 1;
+}
+
+.questline .questline-sign-tier1 {
+  border-color: #6e4524;
+  background: #f3e3c3;
+}
+
+.questline .questline-sign-tier2 {
+  border-color: #8a93a6;
+  background: #fff;
+  box-shadow: 0 0 0 0.15cqw #e8e2d4, 0 0.3cqw 0 rgb(0 0 0 / 35%);
+}
+
+.questline .questline-sign-tier3 {
+  border-color: #c9a227;
+  background: #fffdf5;
+  box-shadow: 0 0 0 0.2cqw #fff6c9, 0 0 1.2cqw rgb(244 211 94 / 70%), 0 0.3cqw 0 rgb(0 0 0 / 35%);
 }
 
 .questline .questline-sign img {
