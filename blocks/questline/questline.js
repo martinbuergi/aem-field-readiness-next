@@ -2322,8 +2322,9 @@ export default async function decorate(block) {
   const isWhale = (x, y) => x >= world.whale.x && x < world.whale.x + world.whale.w
     && y >= world.whale.y && y < world.whale.y + world.whale.h;
   const isShrine = (x, y) => x === world.shrine.x && y === world.shrine.y;
+  // any tile of a customer's house: knock from whichever side the player walks into it
   const customerAt = (x, y) => customers.findIndex(
-    (c) => y === c.house.y + 1 && (x === c.house.x || x === c.house.x + 1),
+    (c) => x >= c.house.x && x <= c.house.x + 1 && y >= c.house.y && y <= c.house.y + 1,
   );
 
   function walkable(x, y) {
@@ -3286,9 +3287,12 @@ export default async function decorate(block) {
     });
   }
 
-  // walking into a person, door, gate or sign opens it; after a conversation the arrow that is
-  // still held down must be pressed again, so closing a dialog never reopens it straight away
-  let bumpReady = true;
+  // walking into a person, house, gate or sign opens it, from any side, with the arrow held.
+  // Only the one just talked to stays shut until the player steps away or lets go of the
+  // arrow, so closing a dialog never reopens it straight away.
+  const targetId = (target) => `${target.type}:${target.index ?? ''}`;
+  let lastTarget = null;
+  let bumpShut = null;
 
   async function run(encounter) {
     if (busy) return;
@@ -3300,7 +3304,7 @@ export default async function decorate(block) {
       if (!(e instanceof DialogClosed)) throw e; // Esc: leave the conversation, progress is kept
     } finally {
       busy = false;
-      bumpReady = false;
+      bumpShut = lastTarget;
       stage.focus({ preventScroll: true });
     }
   }
@@ -3309,6 +3313,7 @@ export default async function decorate(block) {
     if (busy || motion.moving) return;
     const target = facing();
     if (!target) return;
+    lastTarget = targetId(target);
     if (target.type === 'npc') run(() => talkTo(target.index));
     else if (target.type === 'customer') run(() => visitCustomer(target.index));
     else if (target.type === 'gate') run(() => challengeGate(target.index));
@@ -3424,11 +3429,15 @@ export default async function decorate(block) {
       return;
     }
     if (walkable(nx, state.y + dy)) {
+      bumpShut = null;
       motion.moving = true;
       motion.tx = state.x + dx;
       motion.ty = state.y + dy;
       motion.prog = 0;
-    } else if (bumpReady && facing()) interact(); // bumped into someone or something
+      return;
+    }
+    const target = facing(); // bumped into someone or something
+    if (target && targetId(target) !== bumpShut) interact();
   }
 
   let actionArmed = false;
@@ -3448,7 +3457,7 @@ export default async function decorate(block) {
     if (dir) {
       e.preventDefault();
       if (!busy) {
-        if (!e.repeat) bumpReady = true;
+        if (!e.repeat) bumpShut = null;
         press(dir);
         tryStep(dir); // a quick tap still moves one tile
       }
@@ -3461,7 +3470,10 @@ export default async function decorate(block) {
   });
   block.addEventListener('keyup', (e) => {
     const dir = KEYMAP[e.code];
-    if (dir) release(dir);
+    if (dir) {
+      release(dir);
+      bumpShut = null;
+    }
     if (ACTION_KEYS.includes(e.code) && actionArmed) {
       actionArmed = false;
       if (!e.target.closest('.questline-overlay') && !e.target.closest('button')) interact();
@@ -3476,7 +3488,7 @@ export default async function decorate(block) {
       e.preventDefault();
       btn.setPointerCapture(e.pointerId);
       if (!busy) {
-        bumpReady = true;
+        bumpShut = null;
         press(dir);
         tryStep(dir);
       }
